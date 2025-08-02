@@ -40,7 +40,7 @@ git clone https://github.com/mosra/magnum-plugins.git
 cd magnum-plugins
 mkdir build
 cd build
-cmake .. -DCMAKE_PREFIX_PATH=~/apps/magnum -DCMAKE_INSTALL_PREFIX=~/apps/magnum -DMAGNUM_WITH_GLTFIMPORTER=ON
+cmake .. -DCMAKE_PREFIX_PATH=~/apps/magnum -DCMAKE_INSTALL_PREFIX=~/apps/magnum -DMAGNUM_WITH_GLTFIMPORTER=ON -DMAGNUM_WITH_FREETYPEFONT=ON -DMAGNUM_WITH_PNGIMPORTER=ON
 cmake --build . --config Release --target install
 ```
 
@@ -57,4 +57,14 @@ cmake .. -DCMAKE_PREFIX_PATH=~/apps/magnum -DCMAKE_INSTALL_PREFIX=~/apps/magnum-
 ```
 # from within the magnum-examples/build directory:
 LD_LIBRARY_PATH=~/apps/magnum/lib bin/magnum-bullet
+```
+
+## Magnum Extras
+
+```
+git clone https://github.com/mosra/magnum-extras.git
+cd magnum-extras
+mkdir build
+cd build
+cmake .. -DCMAKE_PREFIX_PATH=~/apps/magnum -DMAGNUM_WITH_PLAYER=ON
 ```
