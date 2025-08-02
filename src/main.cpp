@@ -41,10 +41,7 @@ typedef SceneGraph::Object<SceneGraph::MatrixTransformation3D> Object3D;
 typedef SceneGraph::Scene<SceneGraph::MatrixTransformation3D> Scene3D;
 
 struct LightInfo {
-    //Trade::LightData data; // apparently can't be copied... so we copy the members instead!
-    Trade::LightType type;
-    Color3 color;
-    Float intensity;
+    Trade::LightData data;
     Matrix4 transformation;
 };
 
@@ -112,7 +109,7 @@ ViewerExample::ViewerExample(const Arguments& arguments):
         .setWindowFlags(Configuration::WindowFlag::Resizable)}
 {
     _cameraObject
-        .setParent(&_scene)
+        .setParent(&_manipulator)
         .translate(Vector3::zAxis(5.0f));
     (*(_camera = new SceneGraph::Camera3D{_cameraObject}))
         .setAspectRatioPolicy(SceneGraph::AspectRatioPolicy::Extend)
@@ -236,7 +233,7 @@ ViewerExample::ViewerExample(const Arguments& arguments):
     /* Assign parent references */
     for(const Containers::Pair<UnsignedInt, Int>& parent: parents)
         objects[parent.first()]->setParent(parent.second() == -1 ?
-            &_manipulator : objects[parent.second()]);
+            &_scene : objects[parent.second()]);
 
     /* Set transformations. Objects that are not part of the hierarchy are
        ignored, objects that have no transformation entry retain an identity
@@ -293,11 +290,7 @@ ViewerExample::ViewerExample(const Arguments& arguments):
             if (!data)
                 continue;
             _lights.emplace_back(LightInfo{
-                //.data = *data,
-                .type = data->type(),
-                .color = data->color(),
-                .intensity = data->intensity(),
-                // TODO range and attentuation?
+                .data = *Utility::move(data),
                 .transformation = object->absoluteTransformationMatrix()
             });
             //Utility::Debug{} << "light using transformation: " << _lights.back().transformation;
@@ -320,11 +313,11 @@ void ColoredDrawable::draw(const Matrix4& transformationMatrix, SceneGraph::Came
         // Vector4 positionHomogeneous{position, light.type == Trade::LightType::Directional ? 0.0f : 1.0f};
 
         // lightPositions[i] = camera.cameraMatrix() * positionHomogeneous;
-        lightPositions[i] = Vector4{camera.cameraMatrix().transformPoint(position), light.type == Trade::LightType::Directional ? 0.0f : 1.0f};
+        lightPositions[i] = Vector4{camera.cameraMatrix().transformPoint(position), light.data.type() == Trade::LightType::Directional ? 0.0f : 1.0f};
         //lightPositions[i] = camera.projectionMatrix() * positionHomogeneous;
         //lightPositions[i] = positionHomogeneous;
 
-        lightColors[i] = light.color * light.intensity * 0.01f;
+        lightColors[i] = light.data.color() * light.data.intensity() * 0.01f;
         //lightColors[i] = light.color;
 
         //lightRanges[i] = light.range;
@@ -418,7 +411,7 @@ void ViewerExample::pointerMoveEvent(PointerMoveEvent& event) {
     if(_previousPosition.isZero() || axis.isZero())
         return;
 
-    _manipulator.rotate(Math::angle(_previousPosition, currentPosition), axis.normalized());
+    _manipulator.rotate(-Math::angle(_previousPosition, currentPosition), axis.normalized());
     _previousPosition = currentPosition;
 
     redraw();
