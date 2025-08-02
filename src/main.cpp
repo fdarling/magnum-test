@@ -324,7 +324,7 @@ void ColoredDrawable::draw(const Matrix4& transformationMatrix, SceneGraph::Came
         //lightPositions[i] = camera.projectionMatrix() * positionHomogeneous;
         //lightPositions[i] = positionHomogeneous;
 
-        lightColors[i] = light.color * light.intensity;
+        lightColors[i] = light.color * light.intensity * 0.01f;
         //lightColors[i] = light.color;
 
         //lightRanges[i] = light.range;

@@ -18,7 +18,7 @@ git clone https://github.com/mosra/magnum.git
 cd magnum
 mkdir build
 cd build
-cmake .. -DCMAKE_PREFIX_PATH=~/apps/magnum -DCMAKE_INSTALL_PREFIX=~/apps/magnum -DMAGNUM_WITH_SDL2APPLICATION=ON -DMAGNUM_WITH_ANYSCENEIMPORTER=ON
+cmake .. -DCMAKE_PREFIX_PATH=~/apps/magnum -DCMAKE_INSTALL_PREFIX=~/apps/magnum -DMAGNUM_WITH_SDL2APPLICATION=ON -DMAGNUM_WITH_ANYSCENEIMPORTER=ON -DMAGNUM_WITH_ANYIMAGEIMPORTER=ON
 cmake --build . --config Release --target install
 ```
 
@@ -51,7 +51,7 @@ git clone https://github.com/mosra/magnum-examples.git
 cd magnum-examples
 mkdir build
 cd build
-cmake .. -D"CMAKE_PREFIX_PATH=~/apps/corrade\;~/apps/magnum" -DCMAKE_INSTALL_PREFIX=~/apps/magnum-examples -DMAGNUM_WITH_BOX2D_EXAMPLE=ON -DMAGNUM_WITH_BULLET_EXAMPLE=ON
+cmake .. -DCMAKE_PREFIX_PATH=~/apps/magnum -DCMAKE_INSTALL_PREFIX=~/apps/magnum-examples -DMAGNUM_WITH_BOX2D_EXAMPLE=ON -DMAGNUM_WITH_BULLET_EXAMPLE=ON
 ```
 
 ```

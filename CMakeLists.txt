@@ -5,8 +5,6 @@ project(magnum-test)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-list(APPEND CMAKE_PREFIX_PATH "/home/forest/apps/magnum")
-
 find_package(Corrade REQUIRED Main)
 find_package(Magnum REQUIRED
     GL
@@ -14,13 +12,7 @@ find_package(Magnum REQUIRED
     Shaders
     SceneGraph
     Trade
-    Sdl2Application)
-
-include_directories(
-    # ${SDL2_INCLUDE_DIRS}
-)
-link_directories(
-    # ${SDL2_LIBRARY_DIRS}
+    Sdl2Application
 )
 
 add_executable(${PROJECT_NAME}
