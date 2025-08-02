@@ -112,7 +112,7 @@ ViewerExample::ViewerExample(const Arguments& arguments):
         .setWindowFlags(Configuration::WindowFlag::Resizable)}
 {
     _cameraObject
-        .setParent(&_scene)
+        .setParent(&_manipulator)
         .translate(Vector3::zAxis(5.0f));
     (*(_camera = new SceneGraph::Camera3D{_cameraObject}))
         .setAspectRatioPolicy(SceneGraph::AspectRatioPolicy::Extend)
@@ -236,7 +236,7 @@ ViewerExample::ViewerExample(const Arguments& arguments):
     /* Assign parent references */
     for(const Containers::Pair<UnsignedInt, Int>& parent: parents)
         objects[parent.first()]->setParent(parent.second() == -1 ?
-            &_manipulator : objects[parent.second()]);
+            &_scene : objects[parent.second()]);
 
     /* Set transformations. Objects that are not part of the hierarchy are
        ignored, objects that have no transformation entry retain an identity
@@ -418,7 +418,7 @@ void ViewerExample::pointerMoveEvent(PointerMoveEvent& event) {
     if(_previousPosition.isZero() || axis.isZero())
         return;
 
-    _manipulator.rotate(Math::angle(_previousPosition, currentPosition), axis.normalized());
+    _manipulator.rotate(-Math::angle(_previousPosition, currentPosition), axis.normalized());
     _previousPosition = currentPosition;
 
     redraw();
