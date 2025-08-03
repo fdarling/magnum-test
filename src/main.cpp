@@ -67,10 +67,13 @@ class ViewerExample: public Magnum::Platform::Application {
         LightVector _lights;
 
         Scene3D _scene;
-        Object3D _manipulator, _cameraObject;
+        Object3D _cameraObject;
         Magnum::SceneGraph::Camera3D* _camera;
         Magnum::SceneGraph::DrawableGroup3D _drawables;
-        Magnum::Vector3 _previousPosition;
+        Magnum::Vector3 _cameraPosition;
+        Magnum::Vector2 _previousPosition;
+        Magnum::Float _cameraPitch;
+        Magnum::Float _cameraYaw;
 };
 
 class ColoredDrawable: public Magnum::SceneGraph::Drawable3D {
@@ -103,19 +106,19 @@ static const char GLTF_FILE_PATH[] = "../data/test_scene.gltf";
 ViewerExample::ViewerExample(const Arguments& arguments):
     Magnum::Platform::Application{arguments, Configuration{}
         .setTitle("Magnum Viewer Example")
-        .setWindowFlags(Configuration::WindowFlag::Resizable)}
+        .setWindowFlags(Configuration::WindowFlag::Resizable)},
+    _cameraPosition(3.0, 3.0, 15.0),
+    _cameraPitch(0.0),
+    _cameraYaw(0.0)
 {
     _cameraObject
-        .setParent(&_manipulator)
-        .translate(Magnum::Vector3::zAxis(5.0f));
+        .setParent(&_scene);
     (*(_camera = new Magnum::SceneGraph::Camera3D{_cameraObject}))
         .setAspectRatioPolicy(Magnum::SceneGraph::AspectRatioPolicy::Extend)
         .setProjectionMatrix(
             Magnum::Matrix4::perspectiveProjection(Magnum::Math::Literals::operator""_degf(35.0), 1.0f, 0.01f, 1000.0f)
         )
         .setViewport(Magnum::GL::defaultFramebuffer.viewport().size());
-
-    _manipulator.setParent(&_scene);
 
     /* Setup renderer and shader defaults */
     Magnum::GL::Renderer::enable(Magnum::GL::Renderer::Feature::DepthTest);
@@ -204,7 +207,7 @@ ViewerExample::ViewerExample(const Arguments& arguments):
        a default material (if it's there) and be done with it. */
     if(importer->defaultScene() == -1) {
         if(!_meshes.isEmpty() && _meshes[0])
-            new ColoredDrawable{_manipulator, _coloredShader, *_meshes[0],
+            new ColoredDrawable{_scene, _coloredShader, *_meshes[0],
                 _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
         return;
     }
@@ -305,19 +308,13 @@ void ColoredDrawable::draw(const Magnum::Matrix4& transformationMatrix, Magnum::
 
     for (std::size_t i = 0; i < _lights.size(); ++i) {
         const auto& light = _lights[i];
-        // Transform light position to camera space
         Magnum::Vector3 position = light.transformation.translation();
-        // Vector4 positionHomogeneous{position, light.type == Trade::LightType::Directional ? 0.0f : 1.0f};
 
-        // lightPositions[i] = camera.cameraMatrix() * positionHomogeneous;
         lightPositions[i] = Magnum::Vector4{camera.cameraMatrix().transformPoint(position), light.data.type() == Magnum::Trade::LightType::Directional ? 0.0f : 1.0f};
-        //lightPositions[i] = camera.projectionMatrix() * positionHomogeneous;
-        //lightPositions[i] = positionHomogeneous;
 
-        lightColors[i] = light.data.color() * light.data.intensity() * 0.01f;
-        //lightColors[i] = light.color;
+        lightColors[i] = light.data.color() * light.data.intensity() * 0.01f; // Blender likes to make absurdly huge intensities for some reason, I think it uses different units?
 
-        //lightRanges[i] = light.range;
+        //lightRanges[i] = light.range; // TODO import this
         lightRanges[i] = Magnum::Constants::inf();
     }
 
@@ -345,12 +342,60 @@ void TexturedDrawable::draw(const Magnum::Matrix4& transformationMatrix, Magnum:
 }
 
 void ViewerExample::drawEvent() {
-    Magnum::GL::defaultFramebuffer.clear(Magnum::GL::FramebufferClear::Color|
-                                 Magnum::GL::FramebufferClear::Depth);
+    Magnum::Vector3 vel;
+    const bool wPressed = isKeyPressed(Sdl2Application::Key::W);
+    const bool sPressed = isKeyPressed(Sdl2Application::Key::S);
+    const bool aPressed = isKeyPressed(Sdl2Application::Key::A);
+    const bool dPressed = isKeyPressed(Sdl2Application::Key::D);
+    const bool spacePressed = isKeyPressed(Sdl2Application::Key::Space);
+    const bool ctrlPressed = isKeyPressed(Sdl2Application::Key::LeftCtrl);
+    static const float speedScalar = 0.25; // TODO alter this to account for how much time has passed for constant "real world" velocity
+    if (wPressed && !sPressed)
+    {
+        vel.z() = -1.0;
+    }
+    else if (!wPressed && sPressed)
+    {
+        vel.z() = 1.0;
+    }
+    if (aPressed && !dPressed)
+    {
+        vel.x() = -1.0;
+    }
+    else if (!aPressed && dPressed)
+    {
+        vel.x() = 1.0;
+    }
+    if (spacePressed && !ctrlPressed)
+    {
+        vel.y() = 1.0;
+    }
+    else if (!spacePressed && ctrlPressed)
+    {
+        vel.y() = -1.0;
+    }
+    const Magnum::Vector3 before = vel;
+    if (!vel.isZero())
+        vel = vel.normalized()*speedScalar;
+    const Magnum::Vector3 after = vel;
+    
+    const Magnum::Matrix4 horizontalRotationMatrix = Magnum::Matrix4::rotationY(Magnum::Math::Literals::operator""_degf(_cameraYaw));
+    const Magnum::Matrix4 verticalRotationMatrix = Magnum::Matrix4::rotationX(Magnum::Math::Literals::operator""_degf(_cameraPitch));
+    const Magnum::Matrix4 totalRotationMatrix = horizontalRotationMatrix*verticalRotationMatrix;
+
+    // _cameraPosition += horizontalRotationMatrix.transformVector(vel); // keeps you at the same altitude
+    _cameraPosition += totalRotationMatrix.transformVector(vel); // flies around like an airplane
+
+    const Magnum::Matrix4 overallCameraTransform = Magnum::Matrix4::translation(_cameraPosition)*totalRotationMatrix;
+    _cameraObject.setTransformation(overallCameraTransform);
+
+    Magnum::GL::defaultFramebuffer.clear(Magnum::GL::FramebufferClear::Color|Magnum::GL::FramebufferClear::Depth);
 
     _camera->draw(_drawables);
 
     swapBuffers();
+
+    redraw(); // HACK trigger another redraw immediately, so that the walking logic will run (should be doing this in tickEvent() or something else...)
 }
 
 void ViewerExample::viewportEvent(ViewportEvent& event) {
@@ -363,7 +408,7 @@ void ViewerExample::pointerPressEvent(PointerEvent& event) {
        !(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
         return;
 
-    _previousPosition = positionOnSphere(event.position());
+    _previousPosition = event.position();
 }
 
 void ViewerExample::pointerReleaseEvent(PointerEvent& event) {
@@ -378,13 +423,13 @@ void ViewerExample::scrollEvent(ScrollEvent& event) {
     if(!event.offset().y()) return;
 
     /* Distance to origin */
-    const Magnum::Float distance = _cameraObject.transformation().translation().z();
+    // const Magnum::Float distance = _cameraObject.transformation().translation().z();
 
     /* Move 15% of the distance back or forward */
-    _cameraObject.translate(Magnum::Vector3::zAxis(
-        distance*(1.0f - (event.offset().y() > 0 ? 1/0.85f : 0.85f))));
+    // _cameraObject.translate(Magnum::Vector3::zAxis(
+        // distance*(1.0f - (event.offset().y() > 0 ? 1/0.85f : 0.85f))));
 
-    redraw();
+    // redraw();
 }
 
 Magnum::Vector3 ViewerExample::positionOnSphere(const Magnum::Vector2& position) const {
@@ -402,14 +447,16 @@ void ViewerExample::pointerMoveEvent(PointerMoveEvent& event) {
        !(event.pointers() & (Pointer::MouseLeft|Pointer::Finger)))
         return;
 
-    const Magnum::Vector3 currentPosition = positionOnSphere(event.position());
-    const Magnum::Vector3 axis = Magnum::Math::cross(_previousPosition, currentPosition);
+    const Magnum::Vector2 currentPosition = event.position();
+    const Magnum::Vector2 delta = currentPosition - _previousPosition;
+    _previousPosition = currentPosition;
 
-    if(_previousPosition.isZero() || axis.isZero())
+    if(delta.isZero())
         return;
 
-    _manipulator.rotate(-Magnum::Math::angle(_previousPosition, currentPosition), axis.normalized());
-    _previousPosition = currentPosition;
+    _cameraYaw  -= delta.x() * 0.1f;
+    _cameraPitch -= delta.y() * 0.1f;
+    _cameraPitch = Magnum::Math::clamp(_cameraPitch, -89.0f, 89.0f);
 
     redraw();
 }
