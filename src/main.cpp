@@ -52,12 +52,12 @@ class ViewerExample: public Magnum::Platform::Application {
     private:
         void drawEvent() override;
         void viewportEvent(ViewportEvent& event) override;
+        void keyPressEvent(KeyEvent& event) override;
+        void keyReleaseEvent(KeyEvent& event) override;
         void pointerPressEvent(PointerEvent& event) override;
         void pointerReleaseEvent(PointerEvent& event) override;
         void pointerMoveEvent(PointerMoveEvent& event) override;
         void scrollEvent(ScrollEvent& event) override;
-
-        Magnum::Vector3 positionOnSphere(const Magnum::Vector2& position) const;
 
         Magnum::Shaders::PhongGL _coloredShader;
         Magnum::Shaders::PhongGL _texturedShader{Magnum::Shaders::PhongGL::Configuration{}
@@ -71,7 +71,6 @@ class ViewerExample: public Magnum::Platform::Application {
         Magnum::SceneGraph::Camera3D* _camera;
         Magnum::SceneGraph::DrawableGroup3D _drawables;
         Magnum::Vector3 _cameraPosition;
-        Magnum::Vector2 _previousPosition;
         Magnum::Float _cameraPitch;
         Magnum::Float _cameraYaw;
 };
@@ -296,6 +295,8 @@ ViewerExample::ViewerExample(const Arguments& arguments):
             //Utility::Debug{} << "light using transformation: " << _lights.back().transformation;
         }
     }
+
+    setCursor(Cursor::HiddenLocked);
 }
 
 void ColoredDrawable::draw(const Magnum::Matrix4& transformationMatrix, Magnum::SceneGraph::Camera3D& camera) {
@@ -378,7 +379,7 @@ void ViewerExample::drawEvent() {
     if (!vel.isZero())
         vel = vel.normalized()*speedScalar;
     const Magnum::Vector3 after = vel;
-    
+
     const Magnum::Matrix4 horizontalRotationMatrix = Magnum::Matrix4::rotationY(Magnum::Math::Literals::operator""_degf(_cameraYaw));
     const Magnum::Matrix4 verticalRotationMatrix = Magnum::Matrix4::rotationX(Magnum::Math::Literals::operator""_degf(_cameraPitch));
     const Magnum::Matrix4 totalRotationMatrix = horizontalRotationMatrix*verticalRotationMatrix;
@@ -403,20 +404,29 @@ void ViewerExample::viewportEvent(ViewportEvent& event) {
     _camera->setViewport(event.windowSize());
 }
 
-void ViewerExample::pointerPressEvent(PointerEvent& event) {
-    if(!event.isPrimary() ||
-       !(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
-        return;
+void ViewerExample::keyPressEvent(KeyEvent& event)
+{
+    if (event.key() == Sdl2Application::Key::Esc)
+    {
+        exit();
+    }
+}
 
-    _previousPosition = event.position();
+void ViewerExample::keyReleaseEvent(KeyEvent& event)
+{
+    (void)event;
+}
+
+void ViewerExample::pointerPressEvent(PointerEvent& event) {
+    if(!event.isPrimary())
+        return;
+    // if (event.pointer() & (Pointer::MouseLeft|Pointer::Finger)) {}
 }
 
 void ViewerExample::pointerReleaseEvent(PointerEvent& event) {
-    if(!event.isPrimary() ||
-       !(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
+    if(!event.isPrimary())
         return;
-
-    _previousPosition = {};
+    // if (event.pointer() & (Pointer::MouseLeft|Pointer::Finger)) {}
 }
 
 void ViewerExample::scrollEvent(ScrollEvent& event) {
@@ -432,24 +442,12 @@ void ViewerExample::scrollEvent(ScrollEvent& event) {
     // redraw();
 }
 
-Magnum::Vector3 ViewerExample::positionOnSphere(const Magnum::Vector2& position) const {
-    const Magnum::Vector2 positionNormalized =
-        position/Magnum::Vector2{_camera->viewport()} - Magnum::Vector2{0.5f};
-    const Magnum::Float length = positionNormalized.length();
-    const Magnum::Vector3 result = length > 1.0f ?
-        Magnum::Vector3{positionNormalized, 0.0f} :
-        Magnum::Vector3{positionNormalized, 1.0f - length};
-    return (result*Magnum::Vector3::yScale(-1.0f)).normalized();
-}
-
 void ViewerExample::pointerMoveEvent(PointerMoveEvent& event) {
-    if(!event.isPrimary() ||
-       !(event.pointers() & (Pointer::MouseLeft|Pointer::Finger)))
+    if(!event.isPrimary())
         return;
 
     const Magnum::Vector2 currentPosition = event.position();
-    const Magnum::Vector2 delta = currentPosition - _previousPosition;
-    _previousPosition = currentPosition;
+    const Magnum::Vector2 delta = event.relativePosition();
 
     if(delta.isZero())
         return;
