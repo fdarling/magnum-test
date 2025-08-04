@@ -6,6 +6,7 @@
 //#include <Corrade/Utility/Debug.h>
 #include <Corrade/Utility/DebugStl.h>
 
+#include <Magnum/Timeline.h>
 #include <Magnum/ImageView.h>
 #include <Magnum/Mesh.h>
 #include <Magnum/PixelFormat.h>
@@ -52,6 +53,7 @@ class ViewerExample: public Magnum::Platform::Application {
     private:
         void drawEvent() override;
         void viewportEvent(ViewportEvent& event) override;
+        // void tickEvent() override;
         void keyPressEvent(KeyEvent& event) override;
         void keyReleaseEvent(KeyEvent& event) override;
         void pointerPressEvent(PointerEvent& event) override;
@@ -73,6 +75,7 @@ class ViewerExample: public Magnum::Platform::Application {
         Magnum::Vector3 _cameraPosition;
         Magnum::Float _cameraPitch;
         Magnum::Float _cameraYaw;
+        Magnum::Timeline _timeline;
 };
 
 class ColoredDrawable: public Magnum::SceneGraph::Drawable3D {
@@ -297,6 +300,7 @@ ViewerExample::ViewerExample(const Arguments& arguments):
     }
 
     setCursor(Cursor::HiddenLocked);
+    _timeline.start();
 }
 
 void ColoredDrawable::draw(const Magnum::Matrix4& transformationMatrix, Magnum::SceneGraph::Camera3D& camera) {
@@ -343,42 +347,32 @@ void TexturedDrawable::draw(const Magnum::Matrix4& transformationMatrix, Magnum:
 }
 
 void ViewerExample::drawEvent() {
+    static const Magnum::Float WALK_SPEED = 50.0; // units per second
+    const Magnum::Float speedScalar = WALK_SPEED*_timeline.previousFrameDuration();
+
     Magnum::Vector3 vel;
-    const bool wPressed = isKeyPressed(Sdl2Application::Key::W);
-    const bool sPressed = isKeyPressed(Sdl2Application::Key::S);
-    const bool aPressed = isKeyPressed(Sdl2Application::Key::A);
-    const bool dPressed = isKeyPressed(Sdl2Application::Key::D);
-    const bool spacePressed = isKeyPressed(Sdl2Application::Key::Space);
-    const bool ctrlPressed = isKeyPressed(Sdl2Application::Key::LeftCtrl);
-    static const float speedScalar = 0.25; // TODO alter this to account for how much time has passed for constant "real world" velocity
-    if (wPressed && !sPressed)
     {
-        vel.z() = -1.0;
+        const bool wPressed = isKeyPressed(Sdl2Application::Key::W);
+        const bool sPressed = isKeyPressed(Sdl2Application::Key::S);
+        const bool aPressed = isKeyPressed(Sdl2Application::Key::A);
+        const bool dPressed = isKeyPressed(Sdl2Application::Key::D);
+        const bool spacePressed = isKeyPressed(Sdl2Application::Key::Space);
+        const bool ctrlPressed = isKeyPressed(Sdl2Application::Key::LeftCtrl);
+        if (wPressed && !sPressed)
+            vel.z() = -1.0;
+        else if (!wPressed && sPressed)
+            vel.z() = 1.0;
+        if (aPressed && !dPressed)
+            vel.x() = -1.0;
+        else if (!aPressed && dPressed)
+            vel.x() = 1.0;
+        if (spacePressed && !ctrlPressed)
+            vel.y() = 1.0;
+        else if (!spacePressed && ctrlPressed)
+            vel.y() = -1.0;
     }
-    else if (!wPressed && sPressed)
-    {
-        vel.z() = 1.0;
-    }
-    if (aPressed && !dPressed)
-    {
-        vel.x() = -1.0;
-    }
-    else if (!aPressed && dPressed)
-    {
-        vel.x() = 1.0;
-    }
-    if (spacePressed && !ctrlPressed)
-    {
-        vel.y() = 1.0;
-    }
-    else if (!spacePressed && ctrlPressed)
-    {
-        vel.y() = -1.0;
-    }
-    const Magnum::Vector3 before = vel;
     if (!vel.isZero())
         vel = vel.normalized()*speedScalar;
-    const Magnum::Vector3 after = vel;
 
     const Magnum::Matrix4 horizontalRotationMatrix = Magnum::Matrix4::rotationY(Magnum::Math::Literals::operator""_degf(_cameraYaw));
     const Magnum::Matrix4 verticalRotationMatrix = Magnum::Matrix4::rotationX(Magnum::Math::Literals::operator""_degf(_cameraPitch));
@@ -395,14 +389,18 @@ void ViewerExample::drawEvent() {
     _camera->draw(_drawables);
 
     swapBuffers();
-
     redraw(); // HACK trigger another redraw immediately, so that the walking logic will run (should be doing this in tickEvent() or something else...)
+    _timeline.nextFrame();
 }
 
 void ViewerExample::viewportEvent(ViewportEvent& event) {
     Magnum::GL::defaultFramebuffer.setViewport({{}, event.framebufferSize()});
     _camera->setViewport(event.windowSize());
 }
+
+/*void ViewerExample::tickEvent()
+{
+}*/
 
 void ViewerExample::keyPressEvent(KeyEvent& event)
 {

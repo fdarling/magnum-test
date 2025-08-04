@@ -66,5 +66,5 @@ git clone https://github.com/mosra/magnum-extras.git
 cd magnum-extras
 mkdir build
 cd build
-cmake .. -DCMAKE_PREFIX_PATH=~/apps/magnum -DMAGNUM_WITH_PLAYER=ON
+cmake .. -DCMAKE_PREFIX_PATH=~/apps/magnum -DCMAKE_INSTALL_PREFIX=~/apps/magnum -DMAGNUM_WITH_PLAYER=ON -DMAGNUM_WITH_UI=ON -DMAGNUM_WITH_UI_GALLERY=ON
 ```
