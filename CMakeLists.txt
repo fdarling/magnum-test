@@ -13,7 +13,9 @@ find_package(Magnum REQUIRED
     SceneGraph
     Trade
     Sdl2Application
+    DebugTools
 )
+find_package(MagnumExtras REQUIRED Ui)
 
 add_executable(${PROJECT_NAME}
     src/main.cpp
@@ -28,4 +30,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Magnum::SceneGraph
     Magnum::Shaders
     Magnum::Trade
+    Magnum::DebugTools
+    MagnumExtras::Ui
 )

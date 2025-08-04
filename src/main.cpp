@@ -5,6 +5,7 @@
 #include <Corrade/Utility/Arguments.h>
 //#include <Corrade/Utility/Debug.h>
 #include <Corrade/Utility/DebugStl.h>
+#include <Corrade/Utility/Format.h>
 
 #include <Magnum/Timeline.h>
 #include <Magnum/ImageView.h>
@@ -15,6 +16,7 @@
 #include <Magnum/GL/Renderer.h>
 #include <Magnum/GL/Texture.h>
 #include <Magnum/GL/TextureFormat.h>
+#include <Magnum/GL/Extensions.h>
 #include <Magnum/Math/Matrix4.h>
 #include <Magnum/Math/Color.h>
 #include <Magnum/MeshTools/Compile.h>
@@ -31,6 +33,24 @@
 #include <Magnum/Trade/SceneData.h>
 #include <Magnum/Trade/TextureData.h>
 #include <Magnum/Trade/LightData.h>
+#include <Magnum/Text/Alignment.h>
+#include <Magnum/DebugTools/FrameProfiler.h>
+
+#include <Magnum/Ui/Anchor.h>
+#include <Magnum/Ui/Application.h>
+// #include <Magnum/Ui/BaseLayer.h> /* for DebugLayer style names */
+// #include <Magnum/Ui/EventLayer.h> /* for DebugLayer style names */
+// #include <Magnum/Ui/DebugLayerGL.h>
+// #include <Magnum/Ui/Event.h>
+#include <Magnum/Ui/Label.h>
+// #include <Magnum/Ui/NodeFlags.h>
+#include <Magnum/Ui/SnapLayouter.h>
+#include <Magnum/Ui/Style.h>
+// #include <Magnum/Ui/Style.hpp> /* for DebugLayer style names */
+// #include <Magnum/Ui/TextLayer.h> /* for DebugLayer style names */
+#include <Magnum/Ui/TextProperties.h>
+#include <Magnum/Ui/UserInterfaceGL.h>
+
 // #include <MagnumPlugins/GltfImporter/GltfImporter.h>
 
 #include <vector>
@@ -54,6 +74,8 @@ class ViewerExample: public Magnum::Platform::Application {
         void drawEvent() override;
         void viewportEvent(ViewportEvent& event) override;
         // void tickEvent() override;
+        void focusEvent(FocusEvent& event) override;
+        void blurEvent(FocusEvent& event) override;
         void keyPressEvent(KeyEvent& event) override;
         void keyReleaseEvent(KeyEvent& event) override;
         void pointerPressEvent(PointerEvent& event) override;
@@ -76,6 +98,12 @@ class ViewerExample: public Magnum::Platform::Application {
         Magnum::Float _cameraPitch;
         Magnum::Float _cameraYaw;
         Magnum::Timeline _timeline;
+
+        Magnum::Ui::UserInterfaceGL _ui{Magnum::NoCreate};
+        Magnum::Ui::Label _fpsLabel{Magnum::NoCreate, _ui};
+
+        Magnum::DebugTools::FrameProfilerGL _profiler;
+        Magnum::Float _fpsUpdateTimer;
 };
 
 class ColoredDrawable: public Magnum::SceneGraph::Drawable3D {
@@ -105,14 +133,58 @@ class TexturedDrawable: public Magnum::SceneGraph::Drawable3D {
 
 static const char GLTF_FILE_PATH[] = "../data/test_scene.gltf";
 
+constexpr const Magnum::Float WidgetHeight = 36.0f;
+constexpr const Magnum::Float LabelHeight = 24.0f;
+constexpr const Magnum::Vector2 LabelSize{72.0f, LabelHeight};
+
 ViewerExample::ViewerExample(const Arguments& arguments):
     Magnum::Platform::Application{arguments, Configuration{}
         .setTitle("Magnum Viewer Example")
         .setWindowFlags(Configuration::WindowFlag::Resizable)},
     _cameraPosition(3.0, 3.0, 15.0),
     _cameraPitch(0.0),
-    _cameraYaw(0.0)
+    _cameraYaw(0.0),
+    _fpsUpdateTimer(0.0)
 {
+    _ui.create(*this, Magnum::Ui::McssDarkStyle{});
+
+    Magnum::Ui::NodeHandle root = _ui.createNode({}, _ui.size());
+
+    {
+        _fpsLabel = Magnum::Ui::Label(
+            Magnum::Ui::snap(_ui, Magnum::Ui::Snap::TopLeft|Magnum::Ui::Snap::Inside, root, LabelSize),
+            "FPS:",
+            Magnum::Text::Alignment::MiddleLeft,
+            Magnum::Ui::LabelStyle::Default
+        );
+
+        /*Magnum::Ui::NodeHandle labels2 = Magnum::Ui::label(
+            Magnum::Ui::snap(_ui, Magnum::Ui::Snap::BottomLeft|Magnum::Ui::Snap::InsideX, _fpsLabel, LabelSize),
+            "CPU %:",
+            Magnum::Text::Alignment::MiddleLeft,
+            Magnum::Ui::LabelStyle::Default
+        );*/
+    }
+    
+    _profiler.setup(
+        Magnum::DebugTools::FrameProfilerGL::Value::FrameTime|
+        Magnum::DebugTools::FrameProfilerGL::Value::CpuDuration|(
+            #ifndef MAGNUM_TARGET_GLES
+            Magnum::GL::Context::current().isExtensionSupported<Magnum::GL::Extensions::ARB::timer_query>()
+            #elif !defined(MAGNUM_TARGET_WEBGL)
+            Magnum::GL::Context::current().isExtensionSupported<Magnum::GL::Extensions::EXT::disjoint_timer_query>()
+            #else
+            Magnum::GL::Context::current().isExtensionSupported<Magnum::GL::Extensions::EXT::disjoint_timer_query_webgl2>()
+            #endif
+            ?
+                Magnum::DebugTools::FrameProfilerGL::Value::GpuDuration : Magnum::DebugTools::FrameProfilerGL::Values{}),
+        50
+    );
+
+    Magnum::GL::Renderer::setClearColor(Magnum::Color3::fromLinearRgbInt(0x22272e));
+    Magnum::GL::Renderer::enable(Magnum::GL::Renderer::Feature::FaceCulling);
+    Magnum::GL::Renderer::setBlendFunction(Magnum::GL::Renderer::BlendFunction::One, Magnum::GL::Renderer::BlendFunction::OneMinusSourceAlpha);
+
     _cameraObject
         .setParent(&_scene);
     (*(_camera = new Magnum::SceneGraph::Camera3D{_cameraObject}))
@@ -348,7 +420,8 @@ void TexturedDrawable::draw(const Magnum::Matrix4& transformationMatrix, Magnum:
 
 void ViewerExample::drawEvent() {
     static const Magnum::Float WALK_SPEED = 50.0; // units per second
-    const Magnum::Float speedScalar = WALK_SPEED*_timeline.previousFrameDuration();
+    const Magnum::Float timeDelta = _timeline.previousFrameDuration();
+    const Magnum::Float speedScalar = WALK_SPEED*timeDelta;
 
     Magnum::Vector3 vel;
     {
@@ -384,9 +457,22 @@ void ViewerExample::drawEvent() {
     const Magnum::Matrix4 overallCameraTransform = Magnum::Matrix4::translation(_cameraPosition)*totalRotationMatrix;
     _cameraObject.setTransformation(overallCameraTransform);
 
+    static const Magnum::Float FPS_UPDATE_INTERVAL = 0.250;
+    _fpsUpdateTimer += timeDelta;
+    if (_fpsUpdateTimer > FPS_UPDATE_INTERVAL && _profiler.isMeasurementAvailable(Magnum::DebugTools::FrameProfilerGL::Value::FrameTime))
+    {
+        _fpsUpdateTimer = Magnum::Math::fmod(_fpsUpdateTimer, FPS_UPDATE_INTERVAL);
+        const Magnum::Float frameTime = _profiler.frameTimeMean();
+        const Magnum::Float fps = 1000000000.0/frameTime;
+        _fpsLabel.setText(Magnum::Utility::format("FPS: {:.3f}", fps));
+    }
+
     Magnum::GL::defaultFramebuffer.clear(Magnum::GL::FramebufferClear::Color|Magnum::GL::FramebufferClear::Depth);
 
+    _profiler.beginFrame();
     _camera->draw(_drawables);
+    _ui.draw();
+    _profiler.endFrame();
 
     swapBuffers();
     redraw(); // HACK trigger another redraw immediately, so that the walking logic will run (should be doing this in tickEvent() or something else...)
@@ -396,11 +482,22 @@ void ViewerExample::drawEvent() {
 void ViewerExample::viewportEvent(ViewportEvent& event) {
     Magnum::GL::defaultFramebuffer.setViewport({{}, event.framebufferSize()});
     _camera->setViewport(event.windowSize());
+    _ui.setSize(event);
 }
 
 /*void ViewerExample::tickEvent()
 {
 }*/
+
+void ViewerExample::focusEvent(FocusEvent& event)
+{
+    setCursor(Cursor::HiddenLocked);
+}
+
+void ViewerExample::blurEvent(FocusEvent& event)
+{
+    setCursor(Cursor::Arrow);
+}
 
 void ViewerExample::keyPressEvent(KeyEvent& event)
 {
