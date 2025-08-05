@@ -1,3 +1,5 @@
+#include <btBulletDynamicsCommon.h>
+
 #include <Corrade/Containers/Array.h>
 #include <Corrade/Containers/Optional.h>
 #include <Corrade/Containers/Pair.h>
@@ -20,6 +22,7 @@
 #include <Magnum/Math/Matrix4.h>
 #include <Magnum/Math/Color.h>
 #include <Magnum/MeshTools/Compile.h>
+#include <Magnum/MeshTools/GenerateIndices.h>
 #include <Magnum/Platform/Sdl2Application.h>
 #include <Magnum/SceneGraph/Camera.h>
 #include <Magnum/SceneGraph/Drawable.h>
@@ -35,6 +38,9 @@
 #include <Magnum/Trade/LightData.h>
 #include <Magnum/Text/Alignment.h>
 #include <Magnum/DebugTools/FrameProfiler.h>
+#include <Magnum/BulletIntegration/Integration.h>
+#include <Magnum/BulletIntegration/MotionState.h>
+#include <Magnum/BulletIntegration/DebugDraw.h>
 
 #include <Magnum/Ui/Anchor.h>
 #include <Magnum/Ui/Application.h>
@@ -55,6 +61,10 @@
 
 #include <vector>
 
+#ifdef BT_USE_DOUBLE_PRECISION
+#error sorry, this example does not support Bullet with double precision enabled
+#endif
+
 typedef Magnum::SceneGraph::Object<Magnum::SceneGraph::MatrixTransformation3D> Object3D;
 typedef Magnum::SceneGraph::Scene<Magnum::SceneGraph::MatrixTransformation3D> Scene3D;
 
@@ -65,6 +75,12 @@ struct LightInfo {
 
 //typedef Containers::Array<LightInfo> LightVector; _lights;
 typedef std::vector<LightInfo> LightVector; // TODO possibly convert to using Containers::Array<>
+
+struct InstanceData {
+    Magnum::Matrix4 transformationMatrix;
+    Magnum::Matrix3x3 normalMatrix;
+    Magnum::Color3 color;
+};
 
 class ViewerExample: public Magnum::Platform::Application {
     public:
@@ -89,6 +105,15 @@ class ViewerExample: public Magnum::Platform::Application {
         Magnum::Containers::Array<Magnum::Containers::Optional<Magnum::GL::Mesh>> _meshes;
         Magnum::Containers::Array<Magnum::Containers::Optional<Magnum::GL::Texture2D>> _textures;
         LightVector _lights;
+
+        Magnum::BulletIntegration::DebugDraw _debugDraw{Magnum::NoCreate};
+        Magnum::Containers::Array<InstanceData> _boxInstanceData, _sphereInstanceData;
+
+        btDbvtBroadphase _bBroadphase;
+        btDefaultCollisionConfiguration _bCollisionConfig;
+        btCollisionDispatcher _bDispatcher{&_bCollisionConfig};
+        btSequentialImpulseConstraintSolver _bSolver;
+        btDiscreteDynamicsWorld _bWorld{&_bDispatcher, &_bBroadphase, &_bSolver, &_bCollisionConfig};
 
         Scene3D _scene;
         Object3D _cameraObject;
@@ -131,6 +156,74 @@ class TexturedDrawable: public Magnum::SceneGraph::Drawable3D {
         Magnum::GL::Texture2D& _texture;
 };
 
+static const Magnum::Vector3 deriveScale(const Magnum::Matrix4 &mat)
+{
+    Magnum::Vector3 scale;
+    scale.x() = (mat.transformPoint(Magnum::Vector3::xAxis()) - mat.transformPoint(Magnum::Vector3())).length();
+    scale.y() = (mat.transformPoint(Magnum::Vector3::yAxis()) - mat.transformPoint(Magnum::Vector3())).length();
+    scale.z() = (mat.transformPoint(Magnum::Vector3::zAxis()) - mat.transformPoint(Magnum::Vector3())).length();
+    return scale;
+}
+
+class RigidBody: public Object3D {
+    public:
+        RigidBody(Object3D* parent, Magnum::Float mass, const Magnum::Trade::MeshData &meshData, btDynamicsWorld& bWorld): Object3D{parent}, _bWorld(bWorld) {
+            const Magnum::Trade::MeshData triangleMesh = Magnum::MeshTools::generateIndices(meshData);
+            _meshVertices = triangleMesh.positions3DAsArray();
+            _meshIndices = triangleMesh.indicesAsArray();
+
+            {
+                btIndexedMesh bulletMesh;
+                bulletMesh.m_numTriangles = _meshIndices.size()/3;
+                bulletMesh.m_triangleIndexBase = reinterpret_cast<const unsigned char *>(_meshIndices.data());
+                bulletMesh.m_triangleIndexStride = 3 * sizeof(Magnum::UnsignedInt);
+                bulletMesh.m_numVertices = _meshVertices.size();
+                bulletMesh.m_vertexBase = reinterpret_cast<const unsigned char *>(_meshVertices.data());
+                bulletMesh.m_vertexStride = sizeof(Magnum::Vector3);
+                bulletMesh.m_indexType = PHY_INTEGER;
+                bulletMesh.m_vertexType = PHY_FLOAT;
+
+                _pTriMesh.emplace();
+                _pTriMesh->addIndexedMesh(bulletMesh, PHY_INTEGER);
+            }
+
+            _bShape.emplace(_pTriMesh.get(), true, true);
+            const Magnum::Matrix4 mat = absoluteTransformationMatrix();
+            const Magnum::Vector3 scale = deriveScale(mat);
+            _bShape->setLocalScaling(btVector3(scale.x(), scale.y(), scale.z()));
+
+            // Calculate inertia so the object reacts as it should with rotation and everything
+            btVector3 bInertia(0.0f, 0.0f, 0.0f);
+            if(!Magnum::Math::TypeTraits<Magnum::Float>::equals(mass, 0.0f))
+                _bShape->calculateLocalInertia(mass, bInertia);
+
+            // Bullet rigid body setup
+            Magnum::BulletIntegration::MotionState * const motionState = new Magnum::BulletIntegration::MotionState{*this}; // TODO is this leaked?
+            _bRigidBody.emplace(btRigidBody::btRigidBodyConstructionInfo{mass, &motionState->btMotionState(), _bShape.get(), bInertia});
+            _bRigidBody->forceActivationState(DISABLE_DEACTIVATION);
+            bWorld.addRigidBody(_bRigidBody.get());
+        }
+
+        ~RigidBody() {
+            _bWorld.removeRigidBody(_bRigidBody.get());
+        }
+
+        btRigidBody& rigidBody() { return *_bRigidBody; }
+
+        // needed after changing the pose from Magnum side
+        // void syncPose() {
+            // _bRigidBody->setWorldTransform(btTransform(transformationMatrix()));
+        // }
+
+    private:
+        btDynamicsWorld& _bWorld;
+        Magnum::Containers::Array<Magnum::Vector3> _meshVertices;
+        Magnum::Containers::Array<Magnum::UnsignedInt> _meshIndices;
+        Magnum::Containers::Pointer<btTriangleIndexVertexArray> _pTriMesh;
+        Magnum::Containers::Pointer<btBvhTriangleMeshShape> _bShape;
+        Magnum::Containers::Pointer<btRigidBody> _bRigidBody;
+};
+
 static const char GLTF_FILE_PATH[] = "../data/test_scene.gltf";
 
 constexpr const Magnum::Float WidgetHeight = 36.0f;
@@ -146,10 +239,9 @@ ViewerExample::ViewerExample(const Arguments& arguments):
     _cameraYaw(0.0),
     _fpsUpdateTimer(0.0)
 {
+    // set up UI
     _ui.create(*this, Magnum::Ui::McssDarkStyle{});
-
     Magnum::Ui::NodeHandle root = _ui.createNode({}, _ui.size());
-
     {
         _fpsLabel = Magnum::Ui::Label(
             Magnum::Ui::snap(_ui, Magnum::Ui::Snap::TopLeft|Magnum::Ui::Snap::Inside, root, LabelSize),
@@ -165,7 +257,8 @@ ViewerExample::ViewerExample(const Arguments& arguments):
             Magnum::Ui::LabelStyle::Default
         );*/
     }
-    
+
+    // set up framerate tracker
     _profiler.setup(
         Magnum::DebugTools::FrameProfilerGL::Value::FrameTime|
         Magnum::DebugTools::FrameProfilerGL::Value::CpuDuration|(
@@ -181,9 +274,21 @@ ViewerExample::ViewerExample(const Arguments& arguments):
         50
     );
 
+    // OpenGL settings for the UI to work properly
     Magnum::GL::Renderer::setClearColor(Magnum::Color3::fromLinearRgbInt(0x22272e));
     Magnum::GL::Renderer::enable(Magnum::GL::Renderer::Feature::FaceCulling);
     Magnum::GL::Renderer::setBlendFunction(Magnum::GL::Renderer::BlendFunction::One, Magnum::GL::Renderer::BlendFunction::OneMinusSourceAlpha);
+
+    // OpenGL settings for Bullet debug rendering
+    Magnum::GL::Renderer::enable(Magnum::GL::Renderer::Feature::DepthTest);
+    Magnum::GL::Renderer::enable(Magnum::GL::Renderer::Feature::FaceCulling);
+    Magnum::GL::Renderer::enable(Magnum::GL::Renderer::Feature::PolygonOffsetFill);
+    Magnum::GL::Renderer::setPolygonOffset(2.0f, 0.5f);
+
+    _debugDraw = Magnum::BulletIntegration::DebugDraw{};
+    _debugDraw.setMode(Magnum::BulletIntegration::DebugDraw::Mode::DrawWireframe);
+    _bWorld.setGravity({0.0f, -9.8f, 0.0f});
+    _bWorld.setDebugDrawer(&_debugDraw);
 
     _cameraObject
         .setParent(&_scene);
@@ -280,9 +385,10 @@ ViewerExample::ViewerExample(const Arguments& arguments):
     /* The format has no scene support, display just the first loaded mesh with
        a default material (if it's there) and be done with it. */
     if(importer->defaultScene() == -1) {
-        if(!_meshes.isEmpty() && _meshes[0])
-            new ColoredDrawable{_scene, _coloredShader, *_meshes[0],
-                _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
+        if(!_meshes.isEmpty() && _meshes[0]) {
+            RigidBody * const body = new RigidBody{&_scene, 0.0f, *importer->mesh(0), _bWorld};
+            new ColoredDrawable{*body, _coloredShader, *_meshes[0], _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
+        }
         return;
     }
 
@@ -327,16 +433,16 @@ ViewerExample::ViewerExample(const Arguments& arguments):
         meshMaterial: scene->meshesMaterialsAsArray())
     {
         Object3D* object = objects[meshMaterial.first()];
-        Magnum::Containers::Optional<Magnum::GL::Mesh>& mesh =
-            _meshes[meshMaterial.second().first()];
+        const Magnum::UnsignedInt meshIndex = meshMaterial.second().first();
+        Magnum::Containers::Optional<Magnum::GL::Mesh>& mesh = _meshes[meshIndex];
         if(!object || !mesh) continue;
 
         Magnum::Int materialId = meshMaterial.second().second();
 
         /* Material not available / not loaded, use a default material */
         if(materialId == -1 || !materials[materialId]) {
-            new ColoredDrawable{*object, _coloredShader, *mesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffffff),
-                _drawables};
+            RigidBody * const body = new RigidBody{object, 0.0f, *importer->mesh(meshIndex), _bWorld};
+            new ColoredDrawable{*body, _coloredShader, *mesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
 
         /* Textured material, if the texture loaded correctly */
         } else if(materials[materialId]->hasAttribute(
@@ -349,7 +455,8 @@ ViewerExample::ViewerExample(const Arguments& arguments):
 
         /* Color-only material */
         } else {
-            new ColoredDrawable{*object, _coloredShader, *mesh,
+            RigidBody * const body = new RigidBody{object, 0.0f, *importer->mesh(meshIndex), _bWorld};
+            new ColoredDrawable{*body, _coloredShader, *mesh,
                 _lights, materials[materialId]->diffuseColor(), _drawables};
         }
     }
@@ -372,6 +479,8 @@ ViewerExample::ViewerExample(const Arguments& arguments):
     }
 
     setCursor(Cursor::HiddenLocked);
+    // setSwapInterval(1);
+    // setMinimalLoopPeriod(8.0_msec); // max 120Hz?
     _timeline.start();
 }
 
@@ -471,6 +580,10 @@ void ViewerExample::drawEvent() {
 
     _profiler.beginFrame();
     _camera->draw(_drawables);
+    Magnum::GL::Renderer::setDepthFunction(Magnum::GL::Renderer::DepthFunction::LessOrEqual);
+    _debugDraw.setTransformationProjectionMatrix(_camera->projectionMatrix()*_camera->cameraMatrix());
+    _bWorld.debugDrawWorld();
+    Magnum::GL::Renderer::setDepthFunction(Magnum::GL::Renderer::DepthFunction::Less);
     _ui.draw();
     _profiler.endFrame();
 

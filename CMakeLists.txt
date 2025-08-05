@@ -16,6 +16,8 @@ find_package(Magnum REQUIRED
     DebugTools
 )
 find_package(MagnumExtras REQUIRED Ui)
+find_package(MagnumIntegration REQUIRED Bullet)
+find_package(Bullet REQUIRED Dynamics)
 
 add_executable(${PROJECT_NAME}
     src/main.cpp
@@ -32,4 +34,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Magnum::Trade
     Magnum::DebugTools
     MagnumExtras::Ui
+    MagnumIntegration::Bullet
+    Bullet::Dynamics
 )
