@@ -3,6 +3,7 @@
 #include <Corrade/Containers/Array.h>
 #include <Corrade/Containers/Optional.h>
 #include <Corrade/Containers/Pair.h>
+#include <Corrade/Containers/Triple.h>
 #include <Corrade/PluginManager/Manager.h>
 #include <Corrade/Utility/Arguments.h>
 //#include <Corrade/Utility/Debug.h>
@@ -21,6 +22,7 @@
 #include <Magnum/GL/Extensions.h>
 #include <Magnum/Math/Matrix4.h>
 #include <Magnum/Math/Color.h>
+#include <Magnum/Math/Quaternion.h>
 #include <Magnum/MeshTools/Compile.h>
 #include <Magnum/MeshTools/GenerateIndices.h>
 #include <Magnum/Platform/Sdl2Application.h>
@@ -134,7 +136,7 @@ class ViewerExample: public Magnum::Platform::Application {
 
 class ColoredDrawable: public Magnum::SceneGraph::Drawable3D {
     public:
-        explicit ColoredDrawable(Object3D& object, Magnum::Shaders::PhongGL& shader, Magnum::GL::Mesh& mesh, LightVector &lights, const Magnum::Color4& color, Magnum::SceneGraph::DrawableGroup3D& group): Magnum::SceneGraph::Drawable3D{object, &group}, _shader(shader), _mesh(mesh), _lights(lights), _color{color} {}
+        explicit ColoredDrawable(Object3D& object, const Magnum::Vector3& scaling, Magnum::Shaders::PhongGL& shader, Magnum::GL::Mesh& mesh, LightVector &lights, const Magnum::Color4& color, Magnum::SceneGraph::DrawableGroup3D& group): Magnum::SceneGraph::Drawable3D{object, &group}, _shader(shader), _mesh(mesh), _lights(lights), _color{color}, _scaling{scaling} {}
 
     private:
         void draw(const Magnum::Matrix4& transformationMatrix, Magnum::SceneGraph::Camera3D& camera) override;
@@ -143,6 +145,7 @@ class ColoredDrawable: public Magnum::SceneGraph::Drawable3D {
         Magnum::GL::Mesh& _mesh;
         LightVector &_lights;
         Magnum::Color4 _color;
+        Magnum::Vector3 _scaling;
 };
 
 class TexturedDrawable: public Magnum::SceneGraph::Drawable3D {
@@ -159,7 +162,7 @@ class TexturedDrawable: public Magnum::SceneGraph::Drawable3D {
 
 class RigidBody: public Magnum::BulletIntegration::MotionState {
     public:
-        RigidBody(Object3D& object, Magnum::Float mass, const Magnum::Trade::MeshData &meshData, btDynamicsWorld& bWorld): Magnum::BulletIntegration::MotionState{object}, _bWorld(bWorld) {
+        RigidBody(Object3D& object, const Magnum::Vector3& scaling, Magnum::Float mass, const Magnum::Trade::MeshData &meshData, btDynamicsWorld& bWorld): Magnum::BulletIntegration::MotionState{object}, _bWorld(bWorld) {
 
             const Magnum::Trade::MeshData triangleMesh = Magnum::MeshTools::generateIndices(meshData);
             _meshVertices = triangleMesh.positions3DAsArray();
@@ -181,6 +184,7 @@ class RigidBody: public Magnum::BulletIntegration::MotionState {
             }
 
             _bShape.emplace(_pTriMesh.get(), true, true);
+            _bShape->setLocalScaling(btVector3(scaling));
 
             // Calculate inertia so the object reacts as it should with rotation and everything
             btVector3 bInertia(0.0f, 0.0f, 0.0f);
@@ -225,9 +229,9 @@ class RigidBody2: public Magnum::BulletIntegration::MotionState {
             _bRigidBody.emplace(btRigidBody::btRigidBodyConstructionInfo{mass, &btMotionState(), bShape, bInertia});
             _bRigidBody->forceActivationState(DISABLE_DEACTIVATION);
 
-            // btVector3 ballRadius(0.25, 0.25, 0.25); // approximate radius of the ball
-            // _bRigidBody->setCcdMotionThreshold( ballRadius.length() );
-            // _bRigidBody->setCcdSweptSphereRadius( ballRadius.length() * 0.8 );
+            btVector3 ballRadius(0.25, 0.25, 0.25); // approximate radius of the ball
+            _bRigidBody->setCcdMotionThreshold( ballRadius.length() );
+            _bRigidBody->setCcdSweptSphereRadius( ballRadius.length() * 0.8 );
 
             // bWorld.addRigidBody(_bRigidBody.get());
             bWorld.addRigidBody(_bRigidBody.get(), 1, -1);
@@ -423,6 +427,7 @@ ViewerExample::ViewerExample(const Arguments& arguments):
 
     /* Allocate objects that are part of the hierarchy */
     Magnum::Containers::Array<Object3D*> objects{std::size_t(scene->mappingBound())};
+    Magnum::Containers::Array<Magnum::Vector3> scales{std::size_t(scene->mappingBound())};
     Magnum::Containers::Array<Magnum::Containers::Pair<Magnum::UnsignedInt, Magnum::Int>> parents
         = scene->parentsAsArray();
     for(const Magnum::Containers::Pair<Magnum::UnsignedInt, Magnum::Int>& parent: parents)
@@ -436,12 +441,16 @@ ViewerExample::ViewerExample(const Arguments& arguments):
     /* Set transformations. Objects that are not part of the hierarchy are
        ignored, objects that have no transformation entry retain an identity
        transformation. */
-    for(const Magnum::Containers::Pair<Magnum::UnsignedInt, Magnum::Matrix4>& transformation:
-        scene->transformations3DAsArray())
+    for(const Magnum::Containers::Pair<Magnum::UnsignedInt, Corrade::Containers::Triple<Magnum::Vector3, Magnum::Quaternion, Magnum::Vector3>>& transformation:
+        scene->translationsRotationsScalings3DAsArray())
     {
         //Utility::Debug{} << "transformation.first() = " << transformation.first() << "; " << objects[transformation.first()] << "; " << transformation.second();
-        if(Object3D* object = objects[transformation.first()])
-            object->setTransformation(transformation.second());
+        if(Object3D* object = objects[transformation.first()]) {
+            object->setTransformation(
+                Magnum::Matrix4{transformation.second().second().toMatrix()}*
+                Magnum::Matrix4::translation(transformation.second().first()));
+            scales[transformation.first()] = transformation.second().third();
+        }
     }
 
     /* Add drawables for objects that have a mesh, again ignoring objects that
@@ -459,15 +468,15 @@ ViewerExample::ViewerExample(const Arguments& arguments):
 
         /* Material not available / not loaded, use a default material */
         if(materialId == -1 || !materials[materialId]) {
-            new RigidBody{*object, 0.0f, *importer->mesh(meshIndex), _bWorld};
-            new ColoredDrawable{*object, _coloredShader, *mesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
+            new RigidBody{*object, scales[meshMaterial.first()], 0.0f, *importer->mesh(meshIndex), _bWorld};
+            new ColoredDrawable{*object, scales[meshMaterial.first()], _coloredShader, *mesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
 
         /* Textured material, if the texture loaded correctly */
         } else if(materials[materialId]->hasAttribute(
                 Magnum::Trade::MaterialAttribute::DiffuseTexture
             ) && _textures[materials[materialId]->diffuseTexture()])
         {
-            new RigidBody{*object, 0.0f, *importer->mesh(meshIndex), _bWorld};
+            new RigidBody{*object, scales[meshMaterial.first()], 0.0f, *importer->mesh(meshIndex), _bWorld};
             new TexturedDrawable{*object, _texturedShader, *mesh,
                 *_textures[materials[materialId]->diffuseTexture()],
                 _drawables};
@@ -475,8 +484,8 @@ ViewerExample::ViewerExample(const Arguments& arguments):
         /* Color-only material */
         } else {
             /* Assign a RigidBody and a drawable feature to the object */
-            new RigidBody{*object, 0.0f, *importer->mesh(meshIndex), _bWorld};
-            new ColoredDrawable{*object, _coloredShader, *mesh, _lights, materials[materialId]->diffuseColor(), _drawables};
+            new RigidBody{*object, scales[meshMaterial.first()], 0.0f, *importer->mesh(meshIndex), _bWorld};
+            new ColoredDrawable{*object, scales[meshMaterial.first()], _coloredShader, *mesh, _lights, materials[materialId]->diffuseColor(), _drawables};
         }
     }
 
@@ -523,13 +532,17 @@ void ColoredDrawable::draw(const Magnum::Matrix4& transformationMatrix, Magnum::
         lightRanges[i] = Magnum::Constants::inf();
     }
 
+    const Magnum::Matrix4 transformation =
+        transformationMatrix*
+        Magnum::Matrix4::scaling(_scaling);
+
     _shader
         .setDiffuseColor(_color)
         .setLightPositions(lightPositions)
         .setLightColors(lightColors)
         .setLightRanges(lightRanges)
-        .setTransformationMatrix(transformationMatrix)
-        .setNormalMatrix(transformationMatrix.normalMatrix())
+        .setTransformationMatrix(transformation)
+        .setNormalMatrix(transformation.normalMatrix())
         .setProjectionMatrix(camera.projectionMatrix())
         .draw(_mesh);
 }
