@@ -157,18 +157,10 @@ class TexturedDrawable: public Magnum::SceneGraph::Drawable3D {
         Magnum::GL::Texture2D& _texture;
 };
 
-static const Magnum::Vector3 deriveScale(const Magnum::Matrix4 &mat)
-{
-    Magnum::Vector3 scale;
-    scale.x() = (mat.transformPoint(Magnum::Vector3::xAxis()) - mat.transformPoint(Magnum::Vector3())).length();
-    scale.y() = (mat.transformPoint(Magnum::Vector3::yAxis()) - mat.transformPoint(Magnum::Vector3())).length();
-    scale.z() = (mat.transformPoint(Magnum::Vector3::zAxis()) - mat.transformPoint(Magnum::Vector3())).length();
-    return scale;
-}
-
-class RigidBody: public Object3D {
+class RigidBody: public Magnum::BulletIntegration::MotionState {
     public:
-        RigidBody(Object3D* parent, Magnum::Float mass, const Magnum::Trade::MeshData &meshData, btDynamicsWorld& bWorld): Object3D{parent}, _bWorld(bWorld) {
+        RigidBody(Object3D& object, Magnum::Float mass, const Magnum::Trade::MeshData &meshData, btDynamicsWorld& bWorld): Magnum::BulletIntegration::MotionState{object}, _bWorld(bWorld) {
+
             const Magnum::Trade::MeshData triangleMesh = Magnum::MeshTools::generateIndices(meshData);
             _meshVertices = triangleMesh.positions3DAsArray();
             _meshIndices = triangleMesh.indicesAsArray();
@@ -189,9 +181,6 @@ class RigidBody: public Object3D {
             }
 
             _bShape.emplace(_pTriMesh.get(), true, true);
-            const Magnum::Matrix4 mat = absoluteTransformationMatrix();
-            const Magnum::Vector3 scale = deriveScale(mat);
-            _bShape->setLocalScaling(btVector3(scale.x(), scale.y(), scale.z()));
 
             // Calculate inertia so the object reacts as it should with rotation and everything
             btVector3 bInertia(0.0f, 0.0f, 0.0f);
@@ -199,10 +188,8 @@ class RigidBody: public Object3D {
                 _bShape->calculateLocalInertia(mass, bInertia);
 
             // Bullet rigid body setup
-            Magnum::BulletIntegration::MotionState * const motionState = new Magnum::BulletIntegration::MotionState{*this}; // TODO is this leaked?
-            _bRigidBody.emplace(btRigidBody::btRigidBodyConstructionInfo{mass, &motionState->btMotionState(), _bShape.get(), bInertia});
+            _bRigidBody.emplace(btRigidBody::btRigidBodyConstructionInfo{mass, &btMotionState(), _bShape.get(), bInertia});
             _bRigidBody->forceActivationState(DISABLE_DEACTIVATION);
-
             bWorld.addRigidBody(_bRigidBody.get());
         }
 
@@ -213,9 +200,9 @@ class RigidBody: public Object3D {
         btRigidBody& rigidBody() { return *_bRigidBody; }
 
         // needed after changing the pose from Magnum side
-        void syncPose() {
-            _bRigidBody->setWorldTransform(btTransform(transformationMatrix()));
-        }
+        // void syncPose() {
+            // _bRigidBody->setWorldTransform(btTransform(transformationMatrix()));
+        // }
 
     private:
         btDynamicsWorld& _bWorld;
@@ -421,15 +408,8 @@ ViewerExample::ViewerExample(const Arguments& arguments):
         _meshes[i] = Magnum::MeshTools::compile(*meshData, flags);
     }
 
-    /* The format has no scene support, display just the first loaded mesh with
-       a default material (if it's there) and be done with it. */
-    if(importer->defaultScene() == -1) {
-        if(!_meshes.isEmpty() && _meshes[0]) {
-            RigidBody * const body = new RigidBody{&_scene, 0.0f, *importer->mesh(0), _bWorld};
-            new ColoredDrawable{*body, _coloredShader, *_meshes[0], _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
-        }
-        return;
-    }
+    // Assume there's a scene
+    CORRADE_INTERNAL_ASSERT(importer->defaultScene() != -1);
 
     /* Load the scene */
     Magnum::Containers::Optional<Magnum::Trade::SceneData> scene;
@@ -480,26 +460,24 @@ ViewerExample::ViewerExample(const Arguments& arguments):
 
         /* Material not available / not loaded, use a default material */
         if(materialId == -1 || !materials[materialId]) {
-            RigidBody * const body = new RigidBody{&_scene, 0.0f, *importer->mesh(meshIndex), _bWorld};
-            body->setTransformation(object->absoluteTransformation());
-            body->syncPose();
-            new ColoredDrawable{*body, _coloredShader, *mesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
+            new RigidBody{*object, 0.0f, *importer->mesh(meshIndex), _bWorld};
+            new ColoredDrawable{*object, _coloredShader, *mesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
 
         /* Textured material, if the texture loaded correctly */
         } else if(materials[materialId]->hasAttribute(
                 Magnum::Trade::MaterialAttribute::DiffuseTexture
             ) && _textures[materials[materialId]->diffuseTexture()])
         {
+            new RigidBody{*object, 0.0f, *importer->mesh(meshIndex), _bWorld};
             new TexturedDrawable{*object, _texturedShader, *mesh,
                 *_textures[materials[materialId]->diffuseTexture()],
                 _drawables};
 
         /* Color-only material */
         } else {
-            RigidBody * const body = new RigidBody{&_scene, 0.0f, *importer->mesh(meshIndex), _bWorld};
-            body->setTransformation(object->absoluteTransformation());
-            body->syncPose();
-            new ColoredDrawable{*body, _coloredShader, *mesh, _lights, materials[materialId]->diffuseColor(), _drawables};
+            /* Assign a RigidBody and a drawable feature to the object */
+            new RigidBody{*object, 0.0f, *importer->mesh(meshIndex), _bWorld};
+            new ColoredDrawable{*object, _coloredShader, *mesh, _lights, materials[materialId]->diffuseColor(), _drawables};
         }
     }
 
