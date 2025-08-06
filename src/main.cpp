@@ -114,6 +114,7 @@ class ViewerExample: public Magnum::Platform::Application {
         btCollisionDispatcher _bDispatcher{&_bCollisionConfig};
         btSequentialImpulseConstraintSolver _bSolver;
         btDiscreteDynamicsWorld _bWorld{&_bDispatcher, &_bBroadphase, &_bSolver, &_bCollisionConfig};
+        btSphereShape _bSphereShape{0.25f};
 
         Scene3D _scene;
         Object3D _cameraObject;
@@ -201,7 +202,7 @@ class RigidBody: public Object3D {
             Magnum::BulletIntegration::MotionState * const motionState = new Magnum::BulletIntegration::MotionState{*this}; // TODO is this leaked?
             _bRigidBody.emplace(btRigidBody::btRigidBodyConstructionInfo{mass, &motionState->btMotionState(), _bShape.get(), bInertia});
             _bRigidBody->forceActivationState(DISABLE_DEACTIVATION);
-            
+
             bWorld.addRigidBody(_bRigidBody.get());
         }
 
@@ -222,6 +223,43 @@ class RigidBody: public Object3D {
         Magnum::Containers::Array<Magnum::UnsignedInt> _meshIndices;
         Magnum::Containers::Pointer<btTriangleIndexVertexArray> _pTriMesh;
         Magnum::Containers::Pointer<btBvhTriangleMeshShape> _bShape;
+        Magnum::Containers::Pointer<btRigidBody> _bRigidBody;
+};
+
+class RigidBody2: public Object3D {
+    public:
+        RigidBody2(Object3D* parent, Magnum::Float mass, btCollisionShape* bShape, btDynamicsWorld& bWorld): Object3D{parent}, _bWorld(bWorld) {
+            // Calculate inertia so the object reacts as it should with rotation and everything
+            btVector3 bInertia(0.0f, 0.0f, 0.0f);
+            if(!Magnum::Math::TypeTraits<Magnum::Float>::equals(mass, 0.0f))
+                bShape->calculateLocalInertia(mass, bInertia);
+
+            // Bullet rigid body setup
+            Magnum::BulletIntegration::MotionState * const motionState = new Magnum::BulletIntegration::MotionState{*this}; // TODO is this leaked?
+            _bRigidBody.emplace(btRigidBody::btRigidBodyConstructionInfo{mass, &motionState->btMotionState(), bShape, bInertia});
+            _bRigidBody->forceActivationState(DISABLE_DEACTIVATION);
+
+            // btVector3 ballRadius(0.25, 0.25, 0.25); // approximate radius of the ball
+            // _bRigidBody->setCcdMotionThreshold( ballRadius.length() );
+            // _bRigidBody->setCcdSweptSphereRadius( ballRadius.length() * 0.8 );
+
+            // bWorld.addRigidBody(_bRigidBody.get());
+            bWorld.addRigidBody(_bRigidBody.get(), 1, -1);
+        }
+
+        ~RigidBody2() {
+            _bWorld.removeRigidBody(_bRigidBody.get());
+        }
+
+        btRigidBody& rigidBody() { return *_bRigidBody; }
+
+        // needed after changing the pose from Magnum side
+        void syncPose() {
+            _bRigidBody->setWorldTransform(btTransform(transformationMatrix()));
+        }
+
+    private:
+        btDynamicsWorld& _bWorld;
         Magnum::Containers::Pointer<btRigidBody> _bRigidBody;
 };
 
@@ -637,6 +675,19 @@ void ViewerExample::pointerPressEvent(PointerEvent& event) {
         return;
     if (!(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
         return;
+    // const Vector2 position = event.position()*Vector2{framebufferSize()}/Vector2{windowSize()};
+    // const Vector2 clickPoint = Vector2::yScale(-1.0f)*(position/Vector2{framebufferSize()} - Vector2{0.5f})*_camera->projectionSize();
+    // const Vector3 direction = (_cameraObject->absoluteTransformation().rotationScaling()*Vector3{clickPoint, -1.0f}).normalized();
+    RigidBody2 * const body = new RigidBody2{&_scene, 5.0f, &_bSphereShape, _bWorld};
+    // body->setTransformation(object->absoluteTransformation());
+    body->translate(_cameraObject.absoluteTransformation().translation());
+    body->syncPose();
+    // new ColoredDrawable{*body, _coloredShader, *mesh, _lights, materials[materialId]->diffuseColor(), _drawables};
+
+    // body->rigidBody().setLinearVelocity(btVector3{direction*25.f});
+    // body->rigidBody().setLinearVelocity(btVector3{0.0, 0.0, 25.0f});
+
+    event.setAccepted();
 }
 
 void ViewerExample::pointerReleaseEvent(PointerEvent& event) {
