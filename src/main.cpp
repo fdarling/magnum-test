@@ -201,6 +201,7 @@ class RigidBody: public Object3D {
             Magnum::BulletIntegration::MotionState * const motionState = new Magnum::BulletIntegration::MotionState{*this}; // TODO is this leaked?
             _bRigidBody.emplace(btRigidBody::btRigidBodyConstructionInfo{mass, &motionState->btMotionState(), _bShape.get(), bInertia});
             _bRigidBody->forceActivationState(DISABLE_DEACTIVATION);
+            
             bWorld.addRigidBody(_bRigidBody.get());
         }
 
@@ -211,9 +212,9 @@ class RigidBody: public Object3D {
         btRigidBody& rigidBody() { return *_bRigidBody; }
 
         // needed after changing the pose from Magnum side
-        // void syncPose() {
-            // _bRigidBody->setWorldTransform(btTransform(transformationMatrix()));
-        // }
+        void syncPose() {
+            _bRigidBody->setWorldTransform(btTransform(transformationMatrix()));
+        }
 
     private:
         btDynamicsWorld& _bWorld;
@@ -441,7 +442,9 @@ ViewerExample::ViewerExample(const Arguments& arguments):
 
         /* Material not available / not loaded, use a default material */
         if(materialId == -1 || !materials[materialId]) {
-            RigidBody * const body = new RigidBody{object, 0.0f, *importer->mesh(meshIndex), _bWorld};
+            RigidBody * const body = new RigidBody{&_scene, 0.0f, *importer->mesh(meshIndex), _bWorld};
+            body->setTransformation(object->absoluteTransformation());
+            body->syncPose();
             new ColoredDrawable{*body, _coloredShader, *mesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
 
         /* Textured material, if the texture loaded correctly */
@@ -455,9 +458,10 @@ ViewerExample::ViewerExample(const Arguments& arguments):
 
         /* Color-only material */
         } else {
-            RigidBody * const body = new RigidBody{object, 0.0f, *importer->mesh(meshIndex), _bWorld};
-            new ColoredDrawable{*body, _coloredShader, *mesh,
-                _lights, materials[materialId]->diffuseColor(), _drawables};
+            RigidBody * const body = new RigidBody{&_scene, 0.0f, *importer->mesh(meshIndex), _bWorld};
+            body->setTransformation(object->absoluteTransformation());
+            body->syncPose();
+            new ColoredDrawable{*body, _coloredShader, *mesh, _lights, materials[materialId]->diffuseColor(), _drawables};
         }
     }
 
@@ -531,6 +535,9 @@ void ViewerExample::drawEvent() {
     static const Magnum::Float WALK_SPEED = 50.0; // units per second
     const Magnum::Float timeDelta = _timeline.previousFrameDuration();
     const Magnum::Float speedScalar = WALK_SPEED*timeDelta;
+
+    _bWorld.stepSimulation(timeDelta, 5); // TODO move this to tickEvent()?
+    // _bWorld.performDiscreteCollisionDetection();
 
     Magnum::Vector3 vel;
     {
@@ -628,7 +635,8 @@ void ViewerExample::keyReleaseEvent(KeyEvent& event)
 void ViewerExample::pointerPressEvent(PointerEvent& event) {
     if(!event.isPrimary())
         return;
-    // if (event.pointer() & (Pointer::MouseLeft|Pointer::Finger)) {}
+    if (!(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
+        return;
 }
 
 void ViewerExample::pointerReleaseEvent(PointerEvent& event) {
