@@ -213,17 +213,16 @@ class RigidBody: public Magnum::BulletIntegration::MotionState {
         Magnum::Containers::Pointer<btRigidBody> _bRigidBody;
 };
 
-class RigidBody2: public Object3D {
+class RigidBody2: public Magnum::BulletIntegration::MotionState {
     public:
-        RigidBody2(Object3D* parent, Magnum::Float mass, btCollisionShape* bShape, btDynamicsWorld& bWorld): Object3D{parent}, _bWorld(bWorld) {
+        RigidBody2(Object3D& object, Magnum::Float mass, btCollisionShape* bShape, btDynamicsWorld& bWorld): Magnum::BulletIntegration::MotionState{object}, _bWorld(bWorld) {
             // Calculate inertia so the object reacts as it should with rotation and everything
             btVector3 bInertia(0.0f, 0.0f, 0.0f);
             if(!Magnum::Math::TypeTraits<Magnum::Float>::equals(mass, 0.0f))
                 bShape->calculateLocalInertia(mass, bInertia);
 
             // Bullet rigid body setup
-            Magnum::BulletIntegration::MotionState * const motionState = new Magnum::BulletIntegration::MotionState{*this}; // TODO is this leaked?
-            _bRigidBody.emplace(btRigidBody::btRigidBodyConstructionInfo{mass, &motionState->btMotionState(), bShape, bInertia});
+            _bRigidBody.emplace(btRigidBody::btRigidBodyConstructionInfo{mass, &btMotionState(), bShape, bInertia});
             _bRigidBody->forceActivationState(DISABLE_DEACTIVATION);
 
             // btVector3 ballRadius(0.25, 0.25, 0.25); // approximate radius of the ball
@@ -241,9 +240,9 @@ class RigidBody2: public Object3D {
         btRigidBody& rigidBody() { return *_bRigidBody; }
 
         // needed after changing the pose from Magnum side
-        void syncPose() {
-            _bRigidBody->setWorldTransform(btTransform(transformationMatrix()));
-        }
+        // void syncPose() {
+            // _bRigidBody->setWorldTransform(btTransform(transformationMatrix()));
+        // }
 
     private:
         btDynamicsWorld& _bWorld;
@@ -656,10 +655,9 @@ void ViewerExample::pointerPressEvent(PointerEvent& event) {
     // const Vector2 position = event.position()*Vector2{framebufferSize()}/Vector2{windowSize()};
     // const Vector2 clickPoint = Vector2::yScale(-1.0f)*(position/Vector2{framebufferSize()} - Vector2{0.5f})*_camera->projectionSize();
     // const Vector3 direction = (_cameraObject->absoluteTransformation().rotationScaling()*Vector3{clickPoint, -1.0f}).normalized();
-    RigidBody2 * const body = new RigidBody2{&_scene, 5.0f, &_bSphereShape, _bWorld};
-    // body->setTransformation(object->absoluteTransformation());
-    body->translate(_cameraObject.absoluteTransformation().translation());
-    body->syncPose();
+    Object3D * const sphere = new Object3D{};
+    sphere->translate(_cameraObject.absoluteTransformation().translation());
+    RigidBody2 * const body = new RigidBody2{*sphere, 5.0f, &_bSphereShape, _bWorld};
     // new ColoredDrawable{*body, _coloredShader, *mesh, _lights, materials[materialId]->diffuseColor(), _drawables};
 
     // body->rigidBody().setLinearVelocity(btVector3{direction*25.f});
