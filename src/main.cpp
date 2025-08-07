@@ -26,6 +26,8 @@
 #include <Magnum/MeshTools/Compile.h>
 #include <Magnum/MeshTools/GenerateIndices.h>
 #include <Magnum/Platform/Sdl2Application.h>
+// #include <Magnum/Primitives/Icosphere.h>
+#include <Magnum/Primitives/UVSphere.h>
 #include <Magnum/SceneGraph/Camera.h>
 #include <Magnum/SceneGraph/Drawable.h>
 #include <Magnum/SceneGraph/MatrixTransformation3D.h>
@@ -101,6 +103,7 @@ class ViewerExample: public Magnum::Platform::Application {
         void pointerMoveEvent(PointerMoveEvent& event) override;
         void scrollEvent(ScrollEvent& event) override;
 
+        Magnum::GL::Mesh _sphereMesh{Magnum::NoCreate};
         Magnum::Shaders::PhongGL _coloredShader;
         Magnum::Shaders::PhongGL _texturedShader{Magnum::Shaders::PhongGL::Configuration{}
             .setFlags(Magnum::Shaders::PhongGL::Flag::DiffuseTexture)};
@@ -132,6 +135,7 @@ class ViewerExample: public Magnum::Platform::Application {
 
         Magnum::DebugTools::FrameProfilerGL _profiler;
         Magnum::Float _fpsUpdateTimer;
+        bool _physicsDebugDrawing{true};
 };
 
 class ColoredDrawable: public Magnum::SceneGraph::Drawable3D {
@@ -328,6 +332,9 @@ ViewerExample::ViewerExample(const Arguments& arguments):
         )
         .setViewport(Magnum::GL::defaultFramebuffer.viewport().size());
 
+    // _sphereMesh = Magnum::MeshTools::compile(Magnum::Primitives::icosphereSolid(3));
+    _sphereMesh = Magnum::MeshTools::compile(Magnum::Primitives::uvSphereSolid(32, 64));
+
     /* Setup renderer and shader defaults */
     Magnum::GL::Renderer::enable(Magnum::GL::Renderer::Feature::DepthTest);
     Magnum::GL::Renderer::enable(Magnum::GL::Renderer::Feature::FaceCulling);
@@ -521,7 +528,7 @@ void ColoredDrawable::draw(const Magnum::Matrix4& transformationMatrix, Magnum::
     Magnum::Containers::Array<Magnum::Float> lightRanges{Magnum::NoInit, _lights.size()};
 
     for (std::size_t i = 0; i < _lights.size(); ++i) {
-        const auto& light = _lights[i];
+        const LightInfo &light = _lights[i];
         Magnum::Vector3 position = light.transformation.translation();
 
         lightPositions[i] = Magnum::Vector4{camera.cameraMatrix().transformPoint(position), light.data.type() == Magnum::Trade::LightType::Directional ? 0.0f : 1.0f};
@@ -564,7 +571,7 @@ void ViewerExample::drawEvent() {
     const Magnum::Float timeDelta = _timeline.previousFrameDuration();
     const Magnum::Float speedScalar = WALK_SPEED*timeDelta;
 
-    _bWorld.stepSimulation(timeDelta, 5); // TODO move this to tickEvent()?
+    _bWorld.stepSimulation(timeDelta, 10, 1.0f / 240.0f); // TODO move this to tickEvent()?
     // _bWorld.performDiscreteCollisionDetection();
 
     Magnum::Vector3 vel;
@@ -615,10 +622,13 @@ void ViewerExample::drawEvent() {
 
     _profiler.beginFrame();
     _camera->draw(_drawables);
-    Magnum::GL::Renderer::setDepthFunction(Magnum::GL::Renderer::DepthFunction::LessOrEqual);
-    _debugDraw.setTransformationProjectionMatrix(_camera->projectionMatrix()*_camera->cameraMatrix());
-    _bWorld.debugDrawWorld();
-    Magnum::GL::Renderer::setDepthFunction(Magnum::GL::Renderer::DepthFunction::Less);
+    if (_physicsDebugDrawing)
+    {
+        Magnum::GL::Renderer::setDepthFunction(Magnum::GL::Renderer::DepthFunction::LessOrEqual);
+        _debugDraw.setTransformationProjectionMatrix(_camera->projectionMatrix()*_camera->cameraMatrix());
+        _bWorld.debugDrawWorld();
+        Magnum::GL::Renderer::setDepthFunction(Magnum::GL::Renderer::DepthFunction::Less);
+    }
     _ui.draw();
     _profiler.endFrame();
 
@@ -653,6 +663,10 @@ void ViewerExample::keyPressEvent(KeyEvent& event)
     {
         exit();
     }
+    else if (event.key() == Sdl2Application::Key::X)
+    {
+        _physicsDebugDrawing = !_physicsDebugDrawing;
+    }
 }
 
 void ViewerExample::keyReleaseEvent(KeyEvent& event)
@@ -665,16 +679,18 @@ void ViewerExample::pointerPressEvent(PointerEvent& event) {
         return;
     if (!(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
         return;
-    // const Vector2 position = event.position()*Vector2{framebufferSize()}/Vector2{windowSize()};
-    // const Vector2 clickPoint = Vector2::yScale(-1.0f)*(position/Vector2{framebufferSize()} - Vector2{0.5f})*_camera->projectionSize();
-    // const Vector3 direction = (_cameraObject->absoluteTransformation().rotationScaling()*Vector3{clickPoint, -1.0f}).normalized();
-    Object3D * const sphere = new Object3D{};
-    sphere->translate(_cameraObject.absoluteTransformation().translation());
+    const Magnum::Matrix4 cameraTrans = _cameraObject.absoluteTransformation();
+    const Magnum::Vector3 direction = cameraTrans.rotation()*Magnum::Vector3(0.0, 0.0, -1.0);
+
+    Object3D * const sphere = new Object3D{&_scene};
+    sphere->translate(cameraTrans.translation());
     RigidBody2 * const body = new RigidBody2{*sphere, 5.0f, &_bSphereShape, _bWorld};
     // new ColoredDrawable{*body, _coloredShader, *mesh, _lights, materials[materialId]->diffuseColor(), _drawables};
+    static const Magnum::Vector3 BALL_SCALE{0.25, 0.25, 0.25};
+    new ColoredDrawable{*sphere, BALL_SCALE, _coloredShader, _sphereMesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
 
-    // body->rigidBody().setLinearVelocity(btVector3{direction*25.f});
-    // body->rigidBody().setLinearVelocity(btVector3{0.0, 0.0, 25.0f});
+    static const Magnum::Float SPEED = 25.0;
+    body->rigidBody().setLinearVelocity(btVector3{direction*SPEED});
 
     event.setAccepted();
 }
