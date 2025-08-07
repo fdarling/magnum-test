@@ -454,8 +454,8 @@ ViewerExample::ViewerExample(const Arguments& arguments):
         //Utility::Debug{} << "transformation.first() = " << transformation.first() << "; " << objects[transformation.first()] << "; " << transformation.second();
         if(Object3D* object = objects[transformation.first()]) {
             object->setTransformation(
-                Magnum::Matrix4{transformation.second().second().toMatrix()}*
-                Magnum::Matrix4::translation(transformation.second().first()));
+                Magnum::Matrix4::translation(transformation.second().first())*
+                Magnum::Matrix4{transformation.second().second().toMatrix()});
             scales[transformation.first()] = transformation.second().third();
         }
     }
