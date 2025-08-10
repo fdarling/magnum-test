@@ -565,25 +565,6 @@ ViewerExample::ViewerExample(const Arguments& arguments):
 }
 
 void ColoredDrawable::draw(const Magnum::Matrix4& transformationMatrix, Magnum::SceneGraph::Camera3D& camera) {
-    // TODO refactor this code so that the calculations are performed once per camera movement
-
-    // Prepare light positions, colors, and ranges
-    Magnum::Containers::Array<Magnum::Vector4> lightPositions{Magnum::NoInit, _lights.size()};
-    Magnum::Containers::Array<Magnum::Color3> lightColors{Magnum::NoInit, _lights.size()};
-    Magnum::Containers::Array<Magnum::Float> lightRanges{Magnum::NoInit, _lights.size()};
-
-    for (std::size_t i = 0; i < _lights.size(); ++i) {
-        const LightInfo &light = _lights[i];
-        Magnum::Vector3 position = light.transformation.translation();
-
-        lightPositions[i] = Magnum::Vector4{camera.cameraMatrix().transformPoint(position), light.data.type() == Magnum::Trade::LightType::Directional ? 0.0f : 1.0f};
-
-        lightColors[i] = light.data.color() * light.data.intensity() * 0.01f; // Blender likes to make absurdly huge intensities for some reason, I think it uses different units?
-
-        //lightRanges[i] = light.range; // TODO import this
-        lightRanges[i] = Magnum::Constants::inf();
-    }
-
     const Magnum::Matrix4 transformation =
         transformationMatrix*
         Magnum::Matrix4::scaling(_scaling);
@@ -591,9 +572,6 @@ void ColoredDrawable::draw(const Magnum::Matrix4& transformationMatrix, Magnum::
     _shader
         .setAmbientColor(_color*0.1f) // HACK
         .setDiffuseColor(_color)
-        .setLightPositions(lightPositions)
-        .setLightColors(lightColors)
-        .setLightRanges(lightRanges)
         .setTransformationMatrix(transformation)
         .setNormalMatrix(transformation.normalMatrix())
         .setProjectionMatrix(camera.projectionMatrix())
@@ -665,6 +643,36 @@ void ViewerExample::drawEvent() {
     }
 
     Magnum::GL::defaultFramebuffer.clear(Magnum::GL::FramebufferClear::Color|Magnum::GL::FramebufferClear::Depth);
+
+    {
+        // TODO refactor this code so that the calculations are performed once per camera movement
+
+        // Prepare light positions, colors, and ranges
+        Magnum::Containers::Array<Magnum::Vector4> lightPositions{Magnum::NoInit, _lights.size()};
+        Magnum::Containers::Array<Magnum::Color3> lightColors{Magnum::NoInit, _lights.size()};
+        Magnum::Containers::Array<Magnum::Float> lightRanges{Magnum::NoInit, _lights.size()};
+
+        for (std::size_t i = 0; i < _lights.size(); ++i) {
+            const LightInfo &light = _lights[i];
+            Magnum::Vector3 position = light.transformation.translation();
+
+            lightPositions[i] = Magnum::Vector4{_camera->cameraMatrix().transformPoint(position), light.data.type() == Magnum::Trade::LightType::Directional ? 0.0f : 1.0f};
+
+            lightColors[i] = light.data.color() * light.data.intensity() * 0.01f; // Blender likes to make absurdly huge intensities for some reason, I think it uses different units?
+
+            //lightRanges[i] = light.range; // TODO import this
+            lightRanges[i] = Magnum::Constants::inf();
+        }
+
+        _coloredShader
+            .setLightPositions(lightPositions)
+            .setLightColors(lightColors)
+            .setLightRanges(lightRanges);
+        _texturedShader
+            .setLightPositions(lightPositions)
+            .setLightColors(lightColors)
+            .setLightRanges(lightRanges);
+    }
 
     _profiler.beginFrame();
     _camera->draw(_drawables);
