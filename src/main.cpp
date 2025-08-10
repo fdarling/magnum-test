@@ -649,12 +649,12 @@ void ViewerExample::viewportEvent(ViewportEvent& event) {
 
 void ViewerExample::focusEvent(FocusEvent& event)
 {
-    setCursor(Cursor::HiddenLocked);
+    // setCursor(Cursor::HiddenLocked);
 }
 
 void ViewerExample::blurEvent(FocusEvent& event)
 {
-    setCursor(Cursor::Arrow);
+    // setCursor(Cursor::Arrow);
 }
 
 void ViewerExample::keyPressEvent(KeyEvent& event)
@@ -662,6 +662,10 @@ void ViewerExample::keyPressEvent(KeyEvent& event)
     if (event.key() == Sdl2Application::Key::Esc)
     {
         exit();
+    }
+    else if (event.key() == Sdl2Application::Key::Tab)
+    {
+        setCursor((cursor() == Cursor::Arrow) ? Cursor::HiddenLocked : Cursor::Arrow);
     }
     else if (event.key() == Sdl2Application::Key::X)
     {
@@ -717,6 +721,8 @@ void ViewerExample::scrollEvent(ScrollEvent& event) {
 void ViewerExample::pointerMoveEvent(PointerMoveEvent& event) {
     if(!event.isPrimary())
         return;
+    if (cursor() != Cursor::HiddenLocked)
+        return;
 
     const Magnum::Vector2 currentPosition = event.position();
     const Magnum::Vector2 delta = event.relativePosition();
@@ -728,7 +734,7 @@ void ViewerExample::pointerMoveEvent(PointerMoveEvent& event) {
     _cameraPitch -= delta.y() * 0.1f;
     _cameraPitch = Magnum::Math::clamp(_cameraPitch, -89.0f, 89.0f);
 
-    redraw();
+    // redraw();
 }
 
 MAGNUM_APPLICATION_MAIN(ViewerExample)
