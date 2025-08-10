@@ -103,11 +103,11 @@ static bool myContactProcessedCallback(btManifoldPoint &cp, void *vbody0, void *
     btCollisionObject * const obj0 = static_cast<btCollisionObject*>(vbody0);
     btCollisionObject * const obj1 = static_cast<btCollisionObject*>(vbody1);
     // Magnum::Debug{} << bulletDebugCounter++ << "myContactProcessedCallback(" << &cp << "," << obj0 << "," << obj1 << ")";
-    
+
     // cp.m_combinedFriction = 0.5f;
     // cp.m_combinedRollingFriction = 0.1f;
     // cp.m_combinedRestitution = 0.8f;
-    
+
     btRigidBody * toLaunch = nullptr;
     if (obj0->getUserIndex() == 42)
     {
@@ -123,7 +123,7 @@ static bool myContactProcessedCallback(btManifoldPoint &cp, void *vbody0, void *
         vel.setY(10.0);
         toLaunch->setLinearVelocity(vel);
     }
-    
+
     return true;
 }
 
@@ -151,6 +151,11 @@ class ViewerExample: public Magnum::Platform::Application {
         Magnum::Containers::Array<Magnum::Containers::Optional<Magnum::GL::Mesh>> _meshes;
         Magnum::Containers::Array<Magnum::Containers::Optional<Magnum::GL::Texture2D>> _textures;
         LightVector _lights;
+
+        Magnum::Containers::Array<Magnum::Containers::Array<Magnum::Vector3>> _physicsMeshVertices;
+        Magnum::Containers::Array<Magnum::Containers::Array<Magnum::UnsignedInt>> _physicsMeshIndices;
+        Magnum::Containers::Array<Magnum::Containers::Pointer<btTriangleIndexVertexArray>> _physicsTriMeshes;
+        Magnum::Containers::Array<Magnum::Containers::Pointer<btBvhTriangleMeshShape>> _physicsShapes;
 
         Magnum::BulletIntegration::DebugDraw _debugDraw{Magnum::NoCreate};
         Magnum::Containers::Array<InstanceData> _boxInstanceData, _sphereInstanceData;
@@ -207,82 +212,19 @@ class TexturedDrawable: public Magnum::SceneGraph::Drawable3D {
 
 class RigidBody: public Magnum::BulletIntegration::MotionState {
     public:
-        RigidBody(Object3D& object, const Magnum::Vector3& scaling, Magnum::Float mass, const Magnum::Trade::MeshData &meshData, btDynamicsWorld& bWorld): Magnum::BulletIntegration::MotionState{object}, _bWorld(bWorld) {
-
-            const Magnum::Trade::MeshData triangleMesh = Magnum::MeshTools::generateIndices(meshData);
-            _meshVertices = triangleMesh.positions3DAsArray();
-            _meshIndices = triangleMesh.indicesAsArray();
-
-            {
-                btIndexedMesh bulletMesh;
-                bulletMesh.m_numTriangles = _meshIndices.size()/3;
-                bulletMesh.m_triangleIndexBase = reinterpret_cast<const unsigned char *>(_meshIndices.data());
-                bulletMesh.m_triangleIndexStride = 3 * sizeof(Magnum::UnsignedInt);
-                bulletMesh.m_numVertices = _meshVertices.size();
-                bulletMesh.m_vertexBase = reinterpret_cast<const unsigned char *>(_meshVertices.data());
-                bulletMesh.m_vertexStride = sizeof(Magnum::Vector3);
-                bulletMesh.m_indexType = PHY_INTEGER;
-                bulletMesh.m_vertexType = PHY_FLOAT;
-
-                _pTriMesh.emplace();
-                _pTriMesh->addIndexedMesh(bulletMesh, PHY_INTEGER);
-            }
-
-            _bShape.emplace(_pTriMesh.get(), true, true);
-            _bShape->setLocalScaling(btVector3(scaling));
-
+        RigidBody(Object3D& object, Magnum::Float mass, btCollisionShape* bShape, btDynamicsWorld& bWorld): Magnum::BulletIntegration::MotionState{object}, _bWorld(bWorld) {
             // Calculate inertia so the object reacts as it should with rotation and everything
-            btVector3 bInertia(0.0f, 0.0f, 0.0f);
-            if(!Magnum::Math::TypeTraits<Magnum::Float>::equals(mass, 0.0f))
-                _bShape->calculateLocalInertia(mass, bInertia);
-
-            // Bullet rigid body setup
-            _bRigidBody.emplace(btRigidBody::btRigidBodyConstructionInfo{mass, &btMotionState(), _bShape.get(), bInertia});
-            // _bRigidBody->forceActivationState(DISABLE_DEACTIVATION);
-            bWorld.addRigidBody(_bRigidBody.get());
-        }
-
-        ~RigidBody() {
-            _bWorld.removeRigidBody(_bRigidBody.get());
-        }
-
-        btRigidBody& rigidBody() { return *_bRigidBody; }
-
-        // needed after changing the pose from Magnum side
-        // void syncPose() {
-            // _bRigidBody->setWorldTransform(btTransform(transformationMatrix()));
-        // }
-
-    private:
-        btDynamicsWorld& _bWorld;
-        Magnum::Containers::Array<Magnum::Vector3> _meshVertices;
-        Magnum::Containers::Array<Magnum::UnsignedInt> _meshIndices;
-        Magnum::Containers::Pointer<btTriangleIndexVertexArray> _pTriMesh;
-        Magnum::Containers::Pointer<btBvhTriangleMeshShape> _bShape;
-        Magnum::Containers::Pointer<btRigidBody> _bRigidBody;
-};
-
-class RigidBody2: public Magnum::BulletIntegration::MotionState {
-    public:
-        RigidBody2(Object3D& object, Magnum::Float mass, btCollisionShape* bShape, btDynamicsWorld& bWorld): Magnum::BulletIntegration::MotionState{object}, _bWorld(bWorld) {
-            // Calculate inertia so the object reacts as it should with rotation and everything
-            btVector3 bInertia(0.0f, 0.0f, 0.0f);
+            btVector3 bInertia{0.0f, 0.0f, 0.0f};
             if(!Magnum::Math::TypeTraits<Magnum::Float>::equals(mass, 0.0f))
                 bShape->calculateLocalInertia(mass, bInertia);
 
             // Bullet rigid body setup
             _bRigidBody.emplace(btRigidBody::btRigidBodyConstructionInfo{mass, &btMotionState(), bShape, bInertia});
             // _bRigidBody->forceActivationState(DISABLE_DEACTIVATION);
-
-            btVector3 ballRadius(0.25, 0.25, 0.25); // approximate radius of the ball
-            _bRigidBody->setCcdMotionThreshold( ballRadius.length() );
-            _bRigidBody->setCcdSweptSphereRadius( ballRadius.length() * 0.8 );
-
-            // bWorld.addRigidBody(_bRigidBody.get());
-            bWorld.addRigidBody(_bRigidBody.get(), 1, -1);
+            bWorld.addRigidBody(_bRigidBody.get());
         }
 
-        ~RigidBody2() {
+        ~RigidBody() {
             _bWorld.removeRigidBody(_bRigidBody.get());
         }
 
@@ -303,6 +245,9 @@ static const char GLTF_FILE_PATH[] = "../data/test_scene.gltf";
 constexpr const Magnum::Float WidgetHeight = 36.0f;
 constexpr const Magnum::Float LabelHeight = 24.0f;
 constexpr const Magnum::Vector2 LabelSize{72.0f, LabelHeight};
+
+static const Magnum::Float BALL_MASS = 5.0f;
+static const Magnum::Vector3 BALL_SCALE{0.25, 0.25, 0.25};
 
 ViewerExample::ViewerExample(const Arguments& arguments):
     Magnum::Platform::Application{arguments, Configuration{}
@@ -444,8 +389,10 @@ ViewerExample::ViewerExample(const Arguments& arguments):
 
     /* Load all meshes. Meshes that fail to load will be NullOpt. Generate
        normals if not present. */
-    _meshes = Magnum::Containers::Array<Magnum::Containers::Optional<Magnum::GL::Mesh>>{
-        importer->meshCount()};
+    _meshes = Magnum::Containers::Array<Magnum::Containers::Optional<Magnum::GL::Mesh>>{importer->meshCount()};
+    _physicsMeshVertices = Magnum::Containers::Array<Magnum::Containers::Array<Magnum::Vector3>>{importer->meshCount()};
+    _physicsMeshIndices = Magnum::Containers::Array<Magnum::Containers::Array<Magnum::UnsignedInt>>{importer->meshCount()};
+    _physicsTriMeshes = Magnum::Containers::Array<Magnum::Containers::Pointer<btTriangleIndexVertexArray>>{importer->meshCount()};
     for(Magnum::UnsignedInt i = 0; i != importer->meshCount(); ++i) {
         Magnum::Containers::Optional<Magnum::Trade::MeshData> meshData;
         if(!(meshData = importer->mesh(i))) {
@@ -457,6 +404,29 @@ ViewerExample::ViewerExample(const Arguments& arguments):
         if(!meshData->hasAttribute(Magnum::Trade::MeshAttribute::Normal))
             flags |= Magnum::MeshTools::CompileFlag::GenerateFlatNormals;
         _meshes[i] = Magnum::MeshTools::compile(*meshData, flags);
+
+        // make a Bullet physics friendly version of the mesh data
+        const Magnum::Trade::MeshData triangleMesh = Magnum::MeshTools::generateIndices(*meshData);
+        Magnum::Containers::Array<Magnum::Vector3> &physicsMeshVertices = _physicsMeshVertices[i];
+        Magnum::Containers::Array<Magnum::UnsignedInt> &physicsMeshIndices = _physicsMeshIndices[i];
+        Magnum::Containers::Pointer<btTriangleIndexVertexArray> &triMesh = _physicsTriMeshes[i];
+        physicsMeshVertices = triangleMesh.positions3DAsArray();
+        physicsMeshIndices = triangleMesh.indicesAsArray();
+
+        {
+            btIndexedMesh bulletMesh;
+            bulletMesh.m_numTriangles = physicsMeshIndices.size()/3;
+            bulletMesh.m_triangleIndexBase = reinterpret_cast<const unsigned char *>(physicsMeshIndices.data());
+            bulletMesh.m_triangleIndexStride = 3 * sizeof(Magnum::UnsignedInt);
+            bulletMesh.m_numVertices = physicsMeshVertices.size();
+            bulletMesh.m_vertexBase = reinterpret_cast<const unsigned char *>(physicsMeshVertices.data());
+            bulletMesh.m_vertexStride = sizeof(Magnum::Vector3);
+            bulletMesh.m_indexType = PHY_INTEGER;
+            bulletMesh.m_vertexType = PHY_FLOAT;
+
+            triMesh.emplace();
+            triMesh->addIndexedMesh(bulletMesh, PHY_INTEGER);
+        }
     }
 
     // Assume there's a scene
@@ -504,27 +474,37 @@ ViewerExample::ViewerExample(const Arguments& arguments):
     /* Add drawables for objects that have a mesh, again ignoring objects that
        are not part of the hierarchy. There can be multiple mesh assignments
        for one object, simply add one drawable for each. */
+    _physicsShapes = Magnum::Containers::Array<Magnum::Containers::Pointer<btBvhTriangleMeshShape>>{std::size_t(scene->mappingBound())};
     for(const Magnum::Containers::Pair<Magnum::UnsignedInt, Magnum::Containers::Pair<Magnum::UnsignedInt, Magnum::Int>>&
         meshMaterial: scene->meshesMaterialsAsArray())
     {
-        Object3D* object = objects[meshMaterial.first()];
         const Magnum::UnsignedInt meshIndex = meshMaterial.second().first();
+        const Magnum::UnsignedInt objectId = meshMaterial.first();
+        const Magnum::Int materialId = meshMaterial.second().second();
+        Object3D* const object = objects[objectId];
         Magnum::Containers::Optional<Magnum::GL::Mesh>& mesh = _meshes[meshIndex];
         if(!object || !mesh) continue;
 
-        Magnum::Int materialId = meshMaterial.second().second();
+        // create Bullet "shape" for this object
+        {
+            Magnum::Containers::Pointer<btTriangleIndexVertexArray> &triMesh = _physicsTriMeshes[meshIndex];
+            Magnum::Containers::Pointer<btBvhTriangleMeshShape> &shape = _physicsShapes[meshIndex];
+
+            shape.emplace(triMesh.get(), true, true);
+            shape->setLocalScaling(btVector3(scales[objectId]));
+        }
 
         /* Material not available / not loaded, use a default material */
         if(materialId == -1 || !materials[materialId]) {
-            new RigidBody{*object, scales[meshMaterial.first()], 0.0f, *importer->mesh(meshIndex), _bWorld};
-            new ColoredDrawable{*object, scales[meshMaterial.first()], _coloredShader, *mesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
+            new RigidBody{*object, 0.0f, _physicsShapes[meshIndex].get(), _bWorld};
+            new ColoredDrawable{*object, scales[objectId], _coloredShader, *mesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
 
         /* Textured material, if the texture loaded correctly */
         } else if(materials[materialId]->hasAttribute(
                 Magnum::Trade::MaterialAttribute::DiffuseTexture
             ) && _textures[materials[materialId]->diffuseTexture()])
         {
-            new RigidBody{*object, scales[meshMaterial.first()], 0.0f, *importer->mesh(meshIndex), _bWorld};
+            new RigidBody{*object, 0.0f, _physicsShapes[meshIndex].get(), _bWorld};
             new TexturedDrawable{*object, _texturedShader, *mesh,
                 *_textures[materials[materialId]->diffuseTexture()],
                 _drawables};
@@ -532,8 +512,8 @@ ViewerExample::ViewerExample(const Arguments& arguments):
         /* Color-only material */
         } else {
             /* Assign a RigidBody and a drawable feature to the object */
-            new RigidBody{*object, scales[meshMaterial.first()], 0.0f, *importer->mesh(meshIndex), _bWorld};
-            new ColoredDrawable{*object, scales[meshMaterial.first()], _coloredShader, *mesh, _lights, materials[materialId]->diffuseColor(), _drawables};
+            new RigidBody{*object, 0.0f, _physicsShapes[meshIndex].get(), _bWorld};
+            new ColoredDrawable{*object, scales[objectId], _coloredShader, *mesh, _lights, materials[materialId]->diffuseColor(), _drawables};
         }
     }
 
@@ -574,7 +554,7 @@ ViewerExample::ViewerExample(const Arguments& arguments):
         btVector3 bInertia(0.0f, 0.0f, 0.0f);
         btDefaultMotionState * const motionState = new btDefaultMotionState(jumpPadTransform);
         const btRigidBody::btRigidBodyConstructionInfo rbInfo{0, motionState, shape, bInertia};
-        
+
         btRigidBody * const jumpPadBody = new btRigidBody(rbInfo);
         jumpPadBody->setCollisionFlags(btCollisionObject::CF_NO_CONTACT_RESPONSE); // doesn't collide with anything!
         // jumpPadBody->setCollisionFlags(btCollisionObject::CF_NO_CONTACT_RESPONSE | btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK); // for contact added callback to be called
@@ -754,8 +734,7 @@ void ViewerExample::pointerPressEvent(PointerEvent& event) {
 
     Object3D * const sphere = new Object3D{&_scene};
     sphere->translate(cameraTrans.translation());
-    RigidBody2 * const body = new RigidBody2{*sphere, 5.0f, &_bSphereShape, _bWorld};
-    static const Magnum::Vector3 BALL_SCALE{0.25, 0.25, 0.25};
+    RigidBody * const body = new RigidBody{*sphere, BALL_MASS, &_bSphereShape, _bWorld};
     new ColoredDrawable{*sphere, BALL_SCALE, _coloredShader, _sphereMesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
 
     static const Magnum::Float SPEED = 25.0;
