@@ -86,6 +86,47 @@ struct InstanceData {
     Magnum::Color3 color;
 };
 
+// static int bulletDebugCounter;
+
+static void myContactStartedCallback(btPersistentManifold* const &manifold)
+{
+    // Magnum::Debug{} << bulletDebugCounter++ << "myContactStartedCallback(" << manifold << "); body0 =" << manifold->getBody0() << "; body1 =" << manifold->getBody1();
+}
+
+static void myContactEndedCallback(btPersistentManifold* const &manifold)
+{
+    // Magnum::Debug{} << bulletDebugCounter++ << "myContactEndedCallback(" << manifold << "); body0 =" << manifold->getBody0() << "; body1 =" << manifold->getBody1();
+}
+
+static bool myContactProcessedCallback(btManifoldPoint &cp, void *vbody0, void *vbody1)
+{
+    btCollisionObject * const obj0 = static_cast<btCollisionObject*>(vbody0);
+    btCollisionObject * const obj1 = static_cast<btCollisionObject*>(vbody1);
+    // Magnum::Debug{} << bulletDebugCounter++ << "myContactProcessedCallback(" << &cp << "," << obj0 << "," << obj1 << ")";
+    
+    // cp.m_combinedFriction = 0.5f;
+    // cp.m_combinedRollingFriction = 0.1f;
+    // cp.m_combinedRestitution = 0.8f;
+    
+    btRigidBody * toLaunch = nullptr;
+    if (obj0->getUserIndex() == 42)
+    {
+        toLaunch = dynamic_cast<btRigidBody*>(obj1);
+    }
+    else if (obj1->getUserIndex() == 42)
+    {
+        toLaunch = dynamic_cast<btRigidBody*>(obj0);
+    }
+    if (toLaunch)
+    {
+        btVector3 vel = toLaunch->getLinearVelocity();
+        vel.setY(10.0);
+        toLaunch->setLinearVelocity(vel);
+    }
+    
+    return true;
+}
+
 class ViewerExample: public Magnum::Platform::Application {
     public:
         explicit ViewerExample(const Arguments& arguments);
@@ -197,7 +238,7 @@ class RigidBody: public Magnum::BulletIntegration::MotionState {
 
             // Bullet rigid body setup
             _bRigidBody.emplace(btRigidBody::btRigidBodyConstructionInfo{mass, &btMotionState(), _bShape.get(), bInertia});
-            _bRigidBody->forceActivationState(DISABLE_DEACTIVATION);
+            // _bRigidBody->forceActivationState(DISABLE_DEACTIVATION);
             bWorld.addRigidBody(_bRigidBody.get());
         }
 
@@ -231,7 +272,7 @@ class RigidBody2: public Magnum::BulletIntegration::MotionState {
 
             // Bullet rigid body setup
             _bRigidBody.emplace(btRigidBody::btRigidBodyConstructionInfo{mass, &btMotionState(), bShape, bInertia});
-            _bRigidBody->forceActivationState(DISABLE_DEACTIVATION);
+            // _bRigidBody->forceActivationState(DISABLE_DEACTIVATION);
 
             btVector3 ballRadius(0.25, 0.25, 0.25); // approximate radius of the ball
             _bRigidBody->setCcdMotionThreshold( ballRadius.length() );
@@ -513,10 +554,34 @@ ViewerExample::ViewerExample(const Arguments& arguments):
         }
     }
 
+    // gContactAddedCallback = myContactAddedCallback;
+    gContactStartedCallback = myContactStartedCallback;
+    gContactEndedCallback = myContactEndedCallback;
+    gContactProcessedCallback = myContactProcessedCallback;
+
     setCursor(Cursor::HiddenLocked);
     // setSwapInterval(1);
     // setMinimalLoopPeriod(8.0_msec); // max 120Hz?
     _timeline.start();
+
+    // add a jump pad
+    {
+        btTransform jumpPadTransform;
+        jumpPadTransform.setIdentity();
+        jumpPadTransform.setOrigin(btVector3(2, 0.25, 0)); // jump pad position
+
+        btCollisionShape * const shape = new btBoxShape(btVector3(1.0f, 0.25f, 1.0f)); // jump pad size
+        btVector3 bInertia(0.0f, 0.0f, 0.0f);
+        btDefaultMotionState * const motionState = new btDefaultMotionState(jumpPadTransform);
+        const btRigidBody::btRigidBodyConstructionInfo rbInfo{0, motionState, shape, bInertia};
+        
+        btRigidBody * const jumpPadBody = new btRigidBody(rbInfo);
+        jumpPadBody->setCollisionFlags(btCollisionObject::CF_NO_CONTACT_RESPONSE); // doesn't collide with anything!
+        // jumpPadBody->setCollisionFlags(btCollisionObject::CF_NO_CONTACT_RESPONSE | btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK); // for contact added callback to be called
+        jumpPadBody->setUserIndex(42); // HACK sentinel value for detecting the jump pad, used in callbacks
+
+        _bWorld.addCollisionObject(jumpPadBody);
+    }
 }
 
 void ColoredDrawable::draw(const Magnum::Matrix4& transformationMatrix, Magnum::SceneGraph::Camera3D& camera) {
@@ -544,6 +609,7 @@ void ColoredDrawable::draw(const Magnum::Matrix4& transformationMatrix, Magnum::
         Magnum::Matrix4::scaling(_scaling);
 
     _shader
+        .setAmbientColor(_color*0.1f) // HACK
         .setDiffuseColor(_color)
         .setLightPositions(lightPositions)
         .setLightColors(lightColors)
@@ -689,11 +755,12 @@ void ViewerExample::pointerPressEvent(PointerEvent& event) {
     Object3D * const sphere = new Object3D{&_scene};
     sphere->translate(cameraTrans.translation());
     RigidBody2 * const body = new RigidBody2{*sphere, 5.0f, &_bSphereShape, _bWorld};
-    // new ColoredDrawable{*body, _coloredShader, *mesh, _lights, materials[materialId]->diffuseColor(), _drawables};
     static const Magnum::Vector3 BALL_SCALE{0.25, 0.25, 0.25};
     new ColoredDrawable{*sphere, BALL_SCALE, _coloredShader, _sphereMesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
 
     static const Magnum::Float SPEED = 25.0;
+    body->rigidBody().setDamping(0.0, 0.2); // linear, angular
+    // body->rigidBody().setRestitution(0.8);
     body->rigidBody().setLinearVelocity(btVector3{direction*SPEED});
 
     event.setAccepted();
