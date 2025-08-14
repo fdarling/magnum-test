@@ -73,6 +73,18 @@
 typedef Magnum::SceneGraph::Object<Magnum::SceneGraph::MatrixTransformation3D> Object3D;
 typedef Magnum::SceneGraph::Scene<Magnum::SceneGraph::MatrixTransformation3D> Scene3D;
 
+static const Magnum::Float BALL_MASS = 5.0f;
+static const Magnum::Float BALL_RADIUS = 0.25;
+static const Magnum::Vector3 BALL_SCALE{BALL_RADIUS, BALL_RADIUS, BALL_RADIUS};
+
+static const Magnum::Float PLAYER_MASS = 20.0;
+static const Magnum::Float PLAYER_HEIGHT = 1.8;
+static const Magnum::Float PLAYER_RADIUS = 0.3;
+static const Magnum::Vector3 PLAYER_SCALE{0.3, 0.3, 0.3};
+static const btScalar PLAYER_JUMP_VELOCITY = 8.0;
+static const btScalar PLAYER_WALK_SPEED = 5.0;
+static const btScalar PLAYER_WALK_ACCEL = 200.0;
+
 class RigidBody; // forward declaration for use in ViewerExample
 
 namespace PhysicsUserIndex { // TODO: use enum class while allowing conversion to int
@@ -182,8 +194,6 @@ class ViewerExample: public Magnum::Platform::Application {
         void drawEvent() override;
         void viewportEvent(ViewportEvent& event) override;
         // void tickEvent() override;
-        void focusEvent(FocusEvent& event) override;
-        void blurEvent(FocusEvent& event) override;
         void keyPressEvent(KeyEvent& event) override;
         void keyReleaseEvent(KeyEvent& event) override;
         void pointerPressEvent(PointerEvent& event) override;
@@ -213,7 +223,7 @@ class ViewerExample: public Magnum::Platform::Application {
         btCollisionDispatcher _bDispatcher{&_bCollisionConfig};
         btSequentialImpulseConstraintSolver _bSolver;
         btDiscreteDynamicsWorld _bWorld{&_bDispatcher, &_bBroadphase, &_bSolver, &_bCollisionConfig};
-        btSphereShape _bSphereShape{0.25f};
+        btSphereShape _bSphereShape{BALL_RADIUS};
 
         Scene3D _scene;
         Object3D _cameraObject;
@@ -221,17 +231,17 @@ class ViewerExample: public Magnum::Platform::Application {
         RigidBody *_playerBody{nullptr};
         Magnum::SceneGraph::Camera3D* _camera;
         Magnum::SceneGraph::DrawableGroup3D _drawables;
-        Magnum::Vector3 _cameraPosition;
-        Magnum::Float _cameraPitch;
-        Magnum::Float _cameraYaw;
+        Magnum::Vector3 _cameraPosition{3.0, 3.0, 15.0};
+        Magnum::Float _cameraPitch{0.0};
+        Magnum::Float _cameraYaw{0.0};
         Magnum::Timeline _timeline;
-
         Magnum::Ui::UserInterfaceGL _ui{Magnum::NoCreate};
         Magnum::Ui::Label _fpsLabel{Magnum::NoCreate, _ui};
 
         Magnum::DebugTools::FrameProfilerGL _profiler;
-        Magnum::Float _fpsUpdateTimer;
+        Magnum::Float _fpsUpdateTimer{0.0};
         bool _physicsDebugDrawing{true};
+        bool _standingOnGround{false};
 };
 
 class ColoredDrawable: public Magnum::SceneGraph::Drawable3D {
@@ -290,33 +300,19 @@ class RigidBody: public Magnum::BulletIntegration::MotionState {
         Magnum::Containers::Pointer<btRigidBody> _bRigidBody;
 };
 
-static const char GLTF_FILE_PATH[] = "../data/test_scene.gltf";
+static const char GLTF_FILE_PATH[] = "../data/test_scene_torus.glb";
+// static const char GLTF_FILE_PATH[] = "../data/test_scene.gltf";
 
 constexpr const Magnum::Float WidgetHeight = 36.0f;
 constexpr const Magnum::Float LabelHeight = 24.0f;
 constexpr const Magnum::Vector2 LabelSize{72.0f, LabelHeight};
-
-static const Magnum::Float BALL_MASS = 5.0f;
-static const Magnum::Vector3 BALL_SCALE{0.25, 0.25, 0.25};
-
-static const Magnum::Float PLAYER_MASS = 20.0;
-static const Magnum::Float PLAYER_HEIGHT = 1.8;
-static const Magnum::Float PLAYER_RADIUS = 0.3;
-static const Magnum::Vector3 PLAYER_SCALE{0.3, 0.3, 0.3};
-static const btScalar PLAYER_JUMP_VELOCITY = 8.0;
-static const btScalar PLAYER_WALK_SPEED = 5.0;
-static const btScalar PLAYER_WALK_ACCEL = 200.0;
 
 static const Magnum::Float CAMERA_MOVE_SPEED = 50.0; // units per second
 
 ViewerExample::ViewerExample(const Arguments& arguments):
     Magnum::Platform::Application{arguments, Configuration{}
         .setTitle("Magnum Viewer Example")
-        .setWindowFlags(Configuration::WindowFlag::Resizable)},
-    _cameraPosition(3.0, 3.0, 15.0),
-    _cameraPitch(0.0),
-    _cameraYaw(0.0),
-    _fpsUpdateTimer(0.0)
+        .setWindowFlags(Configuration::WindowFlag::Resizable)}
 {
     // set up UI
     _ui.create(*this, Magnum::Ui::McssDarkStyle{});
@@ -374,7 +370,7 @@ ViewerExample::ViewerExample(const Arguments& arguments):
     (*(_camera = new Magnum::SceneGraph::Camera3D{_cameraObject}))
         .setAspectRatioPolicy(Magnum::SceneGraph::AspectRatioPolicy::Extend)
         .setProjectionMatrix(
-            Magnum::Matrix4::perspectiveProjection(Magnum::Math::Literals::operator""_degf(35.0), 1.0f, 0.01f, 1000.0f)
+            Magnum::Matrix4::perspectiveProjection(Magnum::Deg(35.0f), 1.0f, 0.01f, 1000.0f)
         )
         .setViewport(Magnum::GL::defaultFramebuffer.viewport().size());
 
@@ -690,6 +686,7 @@ void ViewerExample::drawEvent() {
         const bool kPressed = isKeyPressed(Sdl2Application::Key::K);
         const bool jPressed = isKeyPressed(Sdl2Application::Key::J);
         const bool lPressed = isKeyPressed(Sdl2Application::Key::L);
+        const bool jmpPressed = isKeyPressed(Sdl2Application::Key::RightShift);
         if (iPressed && !kPressed)
             dir.setZ(-1.0);
         else if (!iPressed && kPressed)
@@ -700,6 +697,7 @@ void ViewerExample::drawEvent() {
             dir.setX(1.0);
         if (!dir.isZero())
             dir.normalize();
+        dir = btVector3{Magnum::Matrix4::rotationY(Magnum::Deg(_cameraYaw)).transformPoint(Magnum::Vector3{dir})};
     
         const btVector3 currentVelocity = _playerBody->rigidBody().getLinearVelocity();
         const float mass = _playerBody->rigidBody().getMass();
@@ -715,11 +713,61 @@ void ViewerExample::drawEvent() {
             _playerBody->rigidBody().applyCentralForce(force);
             // std::cout << "force: (" << force.x() << "," << force.y() << "," << force.z() << ")" << std::endl;
         }
-        
+        if (_standingOnGround && jmpPressed)
+        {
+            btVector3 v = _playerBody->rigidBody().getLinearVelocity();
+            v.setY(PLAYER_JUMP_VELOCITY);  // Adjust for desired jump strength
+            _playerBody->rigidBody().activate();
+            _playerBody->rigidBody().setLinearVelocity(v);
+        }
     }
 
     _bWorld.stepSimulation(timeDelta, 10, 1.0f / 240.0f); // TODO move this to tickEvent()?
     // _bWorld.performDiscreteCollisionDetection();
+    
+    _standingOnGround = false;
+    struct ContactCallback : public btCollisionWorld::ContactResultCallback
+    {
+        btScalar addSingleResult(btManifoldPoint& cp, const btCollisionObjectWrapper* colObj0Wrap, int, int, const btCollisionObjectWrapper* colObj1Wrap, int, int) override
+        {
+            btVector3 normal = cp.m_normalWorldOnB;
+            if (colObj1Wrap->m_collisionObject->getUserIndex() == 1)
+                normal = -normal; // Player is second body
+            if (normal.getY() > 0.4 && cp.getDistance() < 0.f)
+                _standingOnGround = true;
+            return 0.0;
+        }
+    };
+    ContactCallback callback;
+    _bWorld.contactTest(&_playerBody->rigidBody(), callback);
+    
+    {
+        int numManifolds = _bWorld.getDispatcher()->getNumManifolds();
+        for (int i = 0; i < numManifolds; i++)
+        {
+            btPersistentManifold * const contactManifold = _bWorld.getDispatcher()->getManifoldByIndexInternal(i);
+            btCollisionObject * const obA = const_cast<btCollisionObject*>(contactManifold->getBody0());
+            btCollisionObject * const obB = const_cast<btCollisionObject*>(contactManifold->getBody1());
+
+            if (obA != &_playerBody->rigidBody() && obB != &_playerBody->rigidBody())
+                continue;
+
+            const int numContacts = contactManifold->getNumContacts();
+            for (int j = 0; j < numContacts; j++)
+            {
+                btManifoldPoint& pt = contactManifold->getContactPoint(j);
+                if (pt.getDistance() < 0.f)
+                {
+                    btVector3 normal = (obB == &_playerBody->rigidBody()) ? pt.m_normalWorldOnB : -pt.m_normalWorldOnB;
+                    if (normal.getY() >= 0.4)
+                    {
+                        _standingOnGround = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
 
     Magnum::Vector3 vel;
     {
@@ -745,14 +793,15 @@ void ViewerExample::drawEvent() {
     if (!vel.isZero())
         vel = vel.normalized()*cameraMoveSpeedScalar;
 
-    const Magnum::Matrix4 horizontalRotationMatrix = Magnum::Matrix4::rotationY(Magnum::Math::Literals::operator""_degf(_cameraYaw));
-    const Magnum::Matrix4 verticalRotationMatrix = Magnum::Matrix4::rotationX(Magnum::Math::Literals::operator""_degf(_cameraPitch));
+    const Magnum::Matrix4 horizontalRotationMatrix = Magnum::Matrix4::rotationY(Magnum::Deg(_cameraYaw));
+    const Magnum::Matrix4 verticalRotationMatrix = Magnum::Matrix4::rotationX(Magnum::Deg(_cameraPitch));
     const Magnum::Matrix4 totalRotationMatrix = horizontalRotationMatrix*verticalRotationMatrix;
 
     // _cameraPosition += horizontalRotationMatrix.transformVector(vel); // keeps you at the same altitude
     _cameraPosition += totalRotationMatrix.transformVector(vel); // flies around like an airplane
 
-    const Magnum::Matrix4 overallCameraTransform = Magnum::Matrix4::translation(_cameraPosition)*totalRotationMatrix;
+    // const Magnum::Matrix4 overallCameraTransform = Magnum::Matrix4::translation(_playerObject.absoluteTransformation().translation())*totalRotationMatrix*Magnum::Matrix4::translation(Magnum::Vector3(0.0, 0.0, 5.0)); // for 3rd person camera
+    const Magnum::Matrix4 overallCameraTransform = Magnum::Matrix4::translation(_cameraPosition)*totalRotationMatrix; // for free camera
     _cameraObject.setTransformation(overallCameraTransform);
 
     static const Magnum::Float FPS_UPDATE_INTERVAL = 0.250;
@@ -824,16 +873,6 @@ void ViewerExample::viewportEvent(ViewportEvent& event) {
 {
 }*/
 
-void ViewerExample::focusEvent(FocusEvent& event)
-{
-    // setCursor(Cursor::HiddenLocked);
-}
-
-void ViewerExample::blurEvent(FocusEvent& event)
-{
-    // setCursor(Cursor::Arrow);
-}
-
 void ViewerExample::keyPressEvent(KeyEvent& event)
 {
     if (event.key() == Sdl2Application::Key::Esc)
@@ -848,14 +887,6 @@ void ViewerExample::keyPressEvent(KeyEvent& event)
     {
         _physicsDebugDrawing = !_physicsDebugDrawing;
     }
-    else if (event.key() == Sdl2Application::Key::RightShift)
-    {
-        // TODO make sure the player is on the ground first!
-        btVector3 v = _playerBody->rigidBody().getLinearVelocity();
-        v.setY(PLAYER_JUMP_VELOCITY);  // Adjust for desired jump strength
-        _playerBody->rigidBody().activate();
-        _playerBody->rigidBody().setLinearVelocity(v);
-    }
 }
 
 void ViewerExample::keyReleaseEvent(KeyEvent& event)
@@ -868,10 +899,12 @@ void ViewerExample::pointerPressEvent(PointerEvent& event) {
         return;
     if (!(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
         return;
+    const Magnum::Matrix4 playerTrans = _playerObject.absoluteTransformation();
     const Magnum::Matrix4 cameraTrans = _cameraObject.absoluteTransformation();
     const Magnum::Vector3 direction = cameraTrans.rotation()*Magnum::Vector3(0.0, 0.0, -1.0);
 
     Object3D * const sphere = new Object3D{&_scene};
+    // sphere->translate(playerTrans.translation() + direction*(PLAYER_RADIUS*1.5+BALL_RADIUS));
     sphere->translate(cameraTrans.translation());
     RigidBody * const body = new RigidBody{*sphere, BALL_MASS, &_bSphereShape, _bWorld};
     new ColoredDrawable{*sphere, BALL_SCALE, _coloredShader, _sphereMesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
@@ -891,16 +924,8 @@ void ViewerExample::pointerReleaseEvent(PointerEvent& event) {
 }
 
 void ViewerExample::scrollEvent(ScrollEvent& event) {
-    if(!event.offset().y()) return;
-
-    /* Distance to origin */
-    // const Magnum::Float distance = _cameraObject.transformation().translation().z();
-
-    /* Move 15% of the distance back or forward */
-    // _cameraObject.translate(Magnum::Vector3::zAxis(
-        // distance*(1.0f - (event.offset().y() > 0 ? 1/0.85f : 0.85f))));
-
-    // redraw();
+    if(!event.offset().y())
+        return;
 }
 
 void ViewerExample::pointerMoveEvent(PointerMoveEvent& event) {
