@@ -28,7 +28,6 @@
 #include <Magnum/Platform/Sdl2Application.h>
 // #include <Magnum/Primitives/Icosphere.h>
 #include <Magnum/Primitives/UVSphere.h>
-#include <Magnum/Primitives/Capsule.h>
 #include <Magnum/SceneGraph/Camera.h>
 #include <Magnum/SceneGraph/Drawable.h>
 #include <Magnum/SceneGraph/MatrixTransformation3D.h>
@@ -70,33 +69,12 @@
 #error sorry, this example does not support Bullet with double precision enabled
 #endif
 
-typedef Magnum::SceneGraph::Object<Magnum::SceneGraph::MatrixTransformation3D> Object3D;
-typedef Magnum::SceneGraph::Scene<Magnum::SceneGraph::MatrixTransformation3D> Scene3D;
-
-static const Magnum::Float BALL_MASS = 5.0f;
-static const Magnum::Float BALL_RADIUS = 0.25;
-static const Magnum::Vector3 BALL_SCALE{BALL_RADIUS, BALL_RADIUS, BALL_RADIUS};
-
-static const Magnum::Float PLAYER_MASS = 20.0;
-static const Magnum::Float PLAYER_HEIGHT = 1.8;
-static const Magnum::Float PLAYER_RADIUS = 0.3;
-static const Magnum::Vector3 PLAYER_SCALE{0.3, 0.3, 0.3};
-static const btScalar PLAYER_JUMP_VELOCITY = 8.0;
-static const btScalar PLAYER_WALK_SPEED = 5.0;
-static const btScalar PLAYER_WALK_ACCEL = 200.0;
-
-class RigidBody; // forward declaration for use in ViewerExample
-
-namespace PhysicsUserIndex { // TODO: use enum class while allowing conversion to int
-    
-enum Enum
-{
-    None,
-    Player,
-    JumpPad
-};
-
-} // namespace PhysicsUserIndex
+#include "Object3D.h"
+#include "ColoredDrawable.h"
+#include "TexturedDrawable.h"
+#include "RigidBody.h"
+#include "Player.h"
+#include "globals.h"
 
 struct LightInfo {
     Magnum::Trade::LightData data;
@@ -144,7 +122,7 @@ static bool myContactProcessedCallback(btManifoldPoint &cp, void *vbody0, void *
         const btVector3 contactNormal = cp.m_normalWorldOnB;
         const btScalar verticalComponent = contactNormal.dot(btVector3(0, 1, 0));
         const btVector3 vel = player->getLinearVelocity();
-        
+
         // TODO test suppressing "popping" up over edges too forcefully (due to player capsule's rounded bottom)
         #if 0
         if (verticalComponent > 0.2 && vel.y() > 0.05)
@@ -162,7 +140,7 @@ static bool myContactProcessedCallback(btManifoldPoint &cp, void *vbody0, void *
             cp.m_combinedFriction = 0.0f;
         }
     }
-    
+
     // cp.m_combinedFriction = 0.5f;
     // cp.m_combinedRollingFriction = 0.1f;
     // cp.m_combinedRestitution = 0.8f;
@@ -202,7 +180,6 @@ class ViewerExample: public Magnum::Platform::Application {
         void scrollEvent(ScrollEvent& event) override;
 
         Magnum::GL::Mesh _sphereMesh{Magnum::NoCreate};
-        Magnum::GL::Mesh _playerMesh{Magnum::NoCreate};
         Magnum::Shaders::PhongGL _coloredShader;
         Magnum::Shaders::PhongGL _texturedShader{Magnum::Shaders::PhongGL::Configuration{}
             .setFlags(Magnum::Shaders::PhongGL::Flag::DiffuseTexture)};
@@ -227,8 +204,7 @@ class ViewerExample: public Magnum::Platform::Application {
 
         Scene3D _scene;
         Object3D _cameraObject;
-        Object3D _playerObject;
-        RigidBody *_playerBody{nullptr};
+        Player *_player{nullptr};
         Magnum::SceneGraph::Camera3D* _camera;
         Magnum::SceneGraph::DrawableGroup3D _drawables;
         Magnum::Vector3 _cameraPosition{3.0, 3.0, 15.0};
@@ -241,63 +217,6 @@ class ViewerExample: public Magnum::Platform::Application {
         Magnum::DebugTools::FrameProfilerGL _profiler;
         Magnum::Float _fpsUpdateTimer{0.0};
         bool _physicsDebugDrawing{true};
-        bool _standingOnGround{false};
-};
-
-class ColoredDrawable: public Magnum::SceneGraph::Drawable3D {
-    public:
-        explicit ColoredDrawable(Object3D& object, const Magnum::Vector3& scaling, Magnum::Shaders::PhongGL& shader, Magnum::GL::Mesh& mesh, LightVector &lights, const Magnum::Color4& color, Magnum::SceneGraph::DrawableGroup3D& group): Magnum::SceneGraph::Drawable3D{object, &group}, _shader(shader), _mesh(mesh), _lights(lights), _color{color}, _scaling{scaling} {}
-
-    private:
-        void draw(const Magnum::Matrix4& transformationMatrix, Magnum::SceneGraph::Camera3D& camera) override;
-
-        Magnum::Shaders::PhongGL& _shader;
-        Magnum::GL::Mesh& _mesh;
-        LightVector &_lights;
-        Magnum::Color4 _color;
-        Magnum::Vector3 _scaling;
-};
-
-class TexturedDrawable: public Magnum::SceneGraph::Drawable3D {
-    public:
-        explicit TexturedDrawable(Object3D& object, Magnum::Shaders::PhongGL& shader, Magnum::GL::Mesh& mesh, Magnum::GL::Texture2D& texture, Magnum::SceneGraph::DrawableGroup3D& group): Magnum::SceneGraph::Drawable3D{object, &group}, _shader(shader), _mesh(mesh), _texture(texture) {}
-
-    private:
-        void draw(const Magnum::Matrix4& transformationMatrix, Magnum::SceneGraph::Camera3D& camera) override;
-
-        Magnum::Shaders::PhongGL& _shader;
-        Magnum::GL::Mesh& _mesh;
-        Magnum::GL::Texture2D& _texture;
-};
-
-class RigidBody: public Magnum::BulletIntegration::MotionState {
-    public:
-        RigidBody(Object3D& object, Magnum::Float mass, btCollisionShape* bShape, btDynamicsWorld& bWorld): Magnum::BulletIntegration::MotionState{object}, _bWorld(bWorld) {
-            // Calculate inertia so the object reacts as it should with rotation and everything
-            btVector3 bInertia{0.0f, 0.0f, 0.0f};
-            if(!Magnum::Math::TypeTraits<Magnum::Float>::equals(mass, 0.0f))
-                bShape->calculateLocalInertia(mass, bInertia);
-
-            // Bullet rigid body setup
-            _bRigidBody.emplace(btRigidBody::btRigidBodyConstructionInfo{mass, &btMotionState(), bShape, bInertia});
-            // _bRigidBody->forceActivationState(DISABLE_DEACTIVATION);
-            bWorld.addRigidBody(_bRigidBody.get());
-        }
-
-        ~RigidBody() {
-            _bWorld.removeRigidBody(_bRigidBody.get());
-        }
-
-        btRigidBody& rigidBody() { return *_bRigidBody; }
-
-        // needed after changing the pose from Magnum side
-        // void syncPose() {
-            // _bRigidBody->setWorldTransform(btTransform(transformationMatrix()));
-        // }
-
-    private:
-        btDynamicsWorld& _bWorld;
-        Magnum::Containers::Pointer<btRigidBody> _bRigidBody;
 };
 
 static const char GLTF_FILE_PATH[] = "../data/test_scene_torus.glb";
@@ -376,13 +295,6 @@ ViewerExample::ViewerExample(const Arguments& arguments):
 
     // _sphereMesh = Magnum::MeshTools::compile(Magnum::Primitives::icosphereSolid(3));
     _sphereMesh = Magnum::MeshTools::compile(Magnum::Primitives::uvSphereSolid(32, 64));
-    _playerMesh = Magnum::MeshTools::compile(Magnum::Primitives::capsule3DSolid(
-        16, // hemisphereRings
-        4, // cylinderRings
-        32, // segments
-        ((PLAYER_HEIGHT-2.0*PLAYER_RADIUS)/PLAYER_RADIUS)/2.0, // halfLength
-        Magnum::Primitives::CapsuleFlags{} // flags
-    ));
 
     /* Setup renderer and shader defaults */
     Magnum::GL::Renderer::enable(Magnum::GL::Renderer::Feature::DepthTest);
@@ -560,7 +472,7 @@ ViewerExample::ViewerExample(const Arguments& arguments):
         /* Material not available / not loaded, use a default material */
         if(materialId == -1 || !materials[materialId]) {
             new RigidBody{*object, 0.0f, _physicsShapes[meshIndex].get(), _bWorld};
-            new ColoredDrawable{*object, scales[objectId], _coloredShader, *mesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
+            new ColoredDrawable{*object, scales[objectId], _coloredShader, *mesh, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
 
         /* Textured material, if the texture loaded correctly */
         } else if(materials[materialId]->hasAttribute(
@@ -576,7 +488,7 @@ ViewerExample::ViewerExample(const Arguments& arguments):
         } else {
             /* Assign a RigidBody and a drawable feature to the object */
             new RigidBody{*object, 0.0f, _physicsShapes[meshIndex].get(), _bWorld};
-            new ColoredDrawable{*object, scales[objectId], _coloredShader, *mesh, _lights, materials[materialId]->diffuseColor(), _drawables};
+            new ColoredDrawable{*object, scales[objectId], _coloredShader, *mesh, materials[materialId]->diffuseColor(), _drawables};
         }
     }
 
@@ -627,49 +539,7 @@ ViewerExample::ViewerExample(const Arguments& arguments):
     }
 
     // add player
-    {
-        btTransform playerTransform;
-        playerTransform.setIdentity();
-        playerTransform.setOrigin(btVector3(6, 0.9+0.3, 0)); // jump pad position
-
-        btCollisionShape * const shape = new btCapsuleShape(PLAYER_RADIUS, PLAYER_HEIGHT-2.0*PLAYER_RADIUS);
-
-        _playerObject.setParent(&_scene);
-        _playerObject.translate(Magnum::Vector3{6, PLAYER_HEIGHT/2.0, 0});
-        _playerBody = new RigidBody{_playerObject, PLAYER_MASS, shape, _bWorld};
-        new ColoredDrawable{_playerObject, PLAYER_SCALE, _coloredShader, _playerMesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffaaaa), _drawables};
-
-        _playerBody->rigidBody().setAngularFactor(btVector3(0, 0, 0)); // prevent tipping over
-        _playerBody->rigidBody().setFriction(0.5f);
-        _playerBody->rigidBody().setDamping(0.2f, 0.2f);
-        _playerBody->rigidBody().setUserIndex(PhysicsUserIndex::Player);
-    }
-}
-
-void ColoredDrawable::draw(const Magnum::Matrix4& transformationMatrix, Magnum::SceneGraph::Camera3D& camera) {
-    const Magnum::Matrix4 transformation =
-        transformationMatrix*
-        Magnum::Matrix4::scaling(_scaling);
-
-    _shader
-        .setAmbientColor(_color*0.1f) // HACK
-        .setDiffuseColor(_color)
-        .setTransformationMatrix(transformation)
-        .setNormalMatrix(transformation.normalMatrix())
-        .setProjectionMatrix(camera.projectionMatrix())
-        .draw(_mesh);
-}
-
-void TexturedDrawable::draw(const Magnum::Matrix4& transformationMatrix, Magnum::SceneGraph::Camera3D& camera) {
-    _shader
-        .setLightPositions({
-            {camera.cameraMatrix().transformPoint({-3.0f, 10.0f, 10.0f}), 0.0f}
-        })
-        .setTransformationMatrix(transformationMatrix)
-        .setNormalMatrix(transformationMatrix.normalMatrix())
-        .setProjectionMatrix(camera.projectionMatrix())
-        .bindDiffuseTexture(_texture)
-        .draw(_mesh);
+    _player = new Player(&_scene, _coloredShader, _drawables, _bWorld);
 }
 
 void ViewerExample::drawEvent() {
@@ -679,7 +549,7 @@ void ViewerExample::drawEvent() {
 
     // player avatar movement
     {
-        btVector3 dir(0, 0, 0);
+        Magnum::Vector3 dir(Magnum::Math::ZeroInit);
 
         // determine the walking direction
         const bool iPressed = isKeyPressed(Sdl2Application::Key::I);
@@ -688,86 +558,27 @@ void ViewerExample::drawEvent() {
         const bool lPressed = isKeyPressed(Sdl2Application::Key::L);
         const bool jmpPressed = isKeyPressed(Sdl2Application::Key::RightShift);
         if (iPressed && !kPressed)
-            dir.setZ(-1.0);
+            dir.z() = -1.0;
         else if (!iPressed && kPressed)
-            dir.setZ(1.0);
+            dir.z() = 1.0;
         if (jPressed && !lPressed)
-            dir.setX(-1.0);
+            dir.x() = -1.0;
         else if (!jPressed && lPressed)
-            dir.setX(1.0);
+            dir.x() = 1.0;
         if (!dir.isZero())
-            dir.normalize();
-        dir = btVector3{Magnum::Matrix4::rotationY(Magnum::Deg(_cameraYaw)).transformPoint(Magnum::Vector3{dir})};
-    
-        const btVector3 currentVelocity = _playerBody->rigidBody().getLinearVelocity();
-        const float mass = _playerBody->rigidBody().getMass();
-        
-        const btScalar speedInDesiredDirection = currentVelocity.dot(dir);
-
-        const float walk_accel = PLAYER_WALK_ACCEL*std::max(0.0, std::min(1.0, 1.0 - speedInDesiredDirection/PLAYER_WALK_SPEED));
-        
-        const btVector3 force = mass*walk_accel*dir;
-        if (!dir.isZero() && !force.isZero())
         {
-            _playerBody->rigidBody().activate();
-            _playerBody->rigidBody().applyCentralForce(force);
-            // std::cout << "force: (" << force.x() << "," << force.y() << "," << force.z() << ")" << std::endl;
+            dir = dir.normalized();
+            dir = Magnum::Matrix4::rotationY(Magnum::Deg(_cameraYaw)).transformPoint(dir);
+            _player->walkInDirection(dir);
         }
-        if (_standingOnGround && jmpPressed)
+        if (jmpPressed && _player->isOnGround())
         {
-            btVector3 v = _playerBody->rigidBody().getLinearVelocity();
-            v.setY(PLAYER_JUMP_VELOCITY);  // Adjust for desired jump strength
-            _playerBody->rigidBody().activate();
-            _playerBody->rigidBody().setLinearVelocity(v);
+            _player->jump();
         }
     }
 
     _bWorld.stepSimulation(timeDelta, 10, 1.0f / 240.0f); // TODO move this to tickEvent()?
     // _bWorld.performDiscreteCollisionDetection();
-    
-    _standingOnGround = false;
-    struct ContactCallback : public btCollisionWorld::ContactResultCallback
-    {
-        btScalar addSingleResult(btManifoldPoint& cp, const btCollisionObjectWrapper* colObj0Wrap, int, int, const btCollisionObjectWrapper* colObj1Wrap, int, int) override
-        {
-            btVector3 normal = cp.m_normalWorldOnB;
-            if (colObj1Wrap->m_collisionObject->getUserIndex() == 1)
-                normal = -normal; // Player is second body
-            if (normal.getY() > 0.4 && cp.getDistance() < 0.f)
-                _standingOnGround = true;
-            return 0.0;
-        }
-    };
-    ContactCallback callback;
-    _bWorld.contactTest(&_playerBody->rigidBody(), callback);
-    
-    {
-        int numManifolds = _bWorld.getDispatcher()->getNumManifolds();
-        for (int i = 0; i < numManifolds; i++)
-        {
-            btPersistentManifold * const contactManifold = _bWorld.getDispatcher()->getManifoldByIndexInternal(i);
-            btCollisionObject * const obA = const_cast<btCollisionObject*>(contactManifold->getBody0());
-            btCollisionObject * const obB = const_cast<btCollisionObject*>(contactManifold->getBody1());
-
-            if (obA != &_playerBody->rigidBody() && obB != &_playerBody->rigidBody())
-                continue;
-
-            const int numContacts = contactManifold->getNumContacts();
-            for (int j = 0; j < numContacts; j++)
-            {
-                btManifoldPoint& pt = contactManifold->getContactPoint(j);
-                if (pt.getDistance() < 0.f)
-                {
-                    btVector3 normal = (obB == &_playerBody->rigidBody()) ? pt.m_normalWorldOnB : -pt.m_normalWorldOnB;
-                    if (normal.getY() >= 0.4)
-                    {
-                        _standingOnGround = true;
-                        break;
-                    }
-                }
-            }
-        }
-    }
 
     Magnum::Vector3 vel;
     {
@@ -800,7 +611,7 @@ void ViewerExample::drawEvent() {
     // _cameraPosition += horizontalRotationMatrix.transformVector(vel); // keeps you at the same altitude
     _cameraPosition += totalRotationMatrix.transformVector(vel); // flies around like an airplane
 
-    // const Magnum::Matrix4 overallCameraTransform = Magnum::Matrix4::translation(_playerObject.absoluteTransformation().translation())*totalRotationMatrix*Magnum::Matrix4::translation(Magnum::Vector3(0.0, 0.0, 5.0)); // for 3rd person camera
+    // const Magnum::Matrix4 overallCameraTransform = Magnum::Matrix4::translation(_player->absoluteTransformation().translation())*totalRotationMatrix*Magnum::Matrix4::translation(Magnum::Vector3(0.0, 0.0, 5.0)); // for 3rd person camera
     const Magnum::Matrix4 overallCameraTransform = Magnum::Matrix4::translation(_cameraPosition)*totalRotationMatrix; // for free camera
     _cameraObject.setTransformation(overallCameraTransform);
 
@@ -894,25 +705,32 @@ void ViewerExample::keyReleaseEvent(KeyEvent& event)
     (void)event;
 }
 
+static void launchBall(Scene3D &scene, Magnum::Shaders::PhongGL &shader, Magnum::GL::Mesh &mesh, Magnum::SceneGraph::DrawableGroup3D &group, btDynamicsWorld &world, btSphereShape &shape, const Magnum::Vector3 &pos, const Magnum::Vector3 &dir)
+{
+    Object3D * const sphere = new Object3D{&scene};
+    sphere->translate(pos);
+    RigidBody * const body = new RigidBody{*sphere, BALL_MASS, &shape, world};
+    new ColoredDrawable{*sphere, BALL_SCALE, shader, mesh, Magnum::Color3::fromLinearRgbInt(0xffffff), group};
+
+    static const Magnum::Float SPEED = 25.0;
+    body->rigidBody().setDamping(0.0, 0.2); // linear, angular
+    // body->rigidBody().setRestitution(0.8);
+    body->rigidBody().setLinearVelocity(btVector3{dir*SPEED});
+}
+
 void ViewerExample::pointerPressEvent(PointerEvent& event) {
     if(!event.isPrimary())
         return;
     if (!(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
         return;
-    const Magnum::Matrix4 playerTrans = _playerObject.absoluteTransformation();
+
+    // const Magnum::Matrix4 playerTrans = _player->absoluteTransformation();
     const Magnum::Matrix4 cameraTrans = _cameraObject.absoluteTransformation();
+    // const Magnum::Vector3 position = playerTrans.translation() + direction*(PLAYER_RADIUS*1.5+BALL_RADIUS);
+    const Magnum::Vector3 position = cameraTrans.translation();
     const Magnum::Vector3 direction = cameraTrans.rotation()*Magnum::Vector3(0.0, 0.0, -1.0);
 
-    Object3D * const sphere = new Object3D{&_scene};
-    // sphere->translate(playerTrans.translation() + direction*(PLAYER_RADIUS*1.5+BALL_RADIUS));
-    sphere->translate(cameraTrans.translation());
-    RigidBody * const body = new RigidBody{*sphere, BALL_MASS, &_bSphereShape, _bWorld};
-    new ColoredDrawable{*sphere, BALL_SCALE, _coloredShader, _sphereMesh, _lights, Magnum::Color3::fromLinearRgbInt(0xffffff), _drawables};
-
-    static const Magnum::Float SPEED = 25.0;
-    body->rigidBody().setDamping(0.0, 0.2); // linear, angular
-    // body->rigidBody().setRestitution(0.8);
-    body->rigidBody().setLinearVelocity(btVector3{direction*SPEED});
+    launchBall(_scene, _coloredShader, _sphereMesh, _drawables, _bWorld, _bSphereShape, position, direction);
 
     event.setAccepted();
 }

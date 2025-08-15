@@ -20,6 +20,10 @@ find_package(MagnumIntegration REQUIRED Bullet)
 find_package(Bullet REQUIRED Dynamics)
 
 add_executable(${PROJECT_NAME}
+    src/ColoredDrawable.cpp
+    src/TexturedDrawable.cpp
+    src/RigidBody.cpp
+    src/Player.cpp
     src/main.cpp
 )
 
